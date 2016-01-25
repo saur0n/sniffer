@@ -1,2 +1,15 @@
+################################################################################
+#   Advanced network sniffer
+#   Build rules
+#   
+#   © 2013—2016, Sauron
+################################################################################
+
+CC=gcc
+CFLAGS=-Os -Wall -std=gnu++11
+LIBRARIES=-lstdc++ -lpthread -lm
+SOURCES=*.cpp utils/*.cpp
+OUTPUT=sniffer
+
 all:
-	gcc -o sniffer -lstdc++ -lpthread -Os -Wall -std=gnu++11 *.cpp
+	$(CC) -o $(OUTPUT) $(CFLAGS) $(LIBRARIES) $(SOURCES)
