@@ -216,7 +216,7 @@ const char * Error::getError() const { return strerror(error); }
 class Sniffer {
 public:
     /**/
-    Sniffer(const Plugin &plugin);
+    explicit Sniffer(const Plugin &plugin);
     /** Close connection and destroy plugin **/
     virtual ~Sniffer();
     /** Returns unique instance identifier **/
@@ -404,7 +404,7 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
         cerr << "Connection #" << getInstanceId() << ": disconnected from "
             << (incoming?"server":"client") << endl;
     }
-    catch (Error e) {
+    catch (const Error &e) {
         cerr << "Connection #" << getInstanceId() << ": " << e << endl;
     }
 }
@@ -477,7 +477,7 @@ int mainLoop(const char * program, const Plugin &plugin, int listener, T ... arg
         try {
             new StreamSniffer(plugin,cout,client,args...);
         }
-        catch (Error e) {
+        catch (const Error &e) {
             cerr << program << ": " << e << endl;
             close(client);
         }
@@ -600,12 +600,12 @@ int main(int argc, char ** argv) {
                 throw "this cannot happens";
         }
     }
-    catch (Registry::PluginNotFoundException e) {
+    catch (const Registry::PluginNotFoundException &e) {
         cerr << "Protocol with specified name was not found.\n";
         cerr << "See " << argv[0] << " --help" << endl;
         return 2;
     }
-    catch (Error e) {
+    catch (const Error &e) {
         cerr << argv[0] << ": " << e << endl;
         return 1;
     }

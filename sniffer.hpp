@@ -17,7 +17,7 @@ typedef std::pair<const char *,uint16_t> HostAddress;
 class Error {
 public:
     /** Create exception **/
-    Error(const char * stage);
+    explicit Error(const char * stage);
     /** Create exception and specify error code **/
     Error(const char * stage, int error) : stage(stage), error(error) {}
     /** Returns stage name **/
