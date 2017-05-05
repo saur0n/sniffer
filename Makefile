@@ -8,7 +8,7 @@
 CC=gcc
 CFLAGS=-Os -Wall -std=gnu++11
 LIBRARIES=-lstdc++ -lpthread -lm -lz
-SOURCES=*.cpp utils/*.cpp
+SOURCES=*.cpp
 OUTPUT=sniffer
 
 all:
