@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Plugin SDK
  *  
- *  © 2013—2016, Sauron
+ *  © 2013—2017, Sauron
  ******************************************************************************/
 
 #ifndef __SNIFFER_HPP

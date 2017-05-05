@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2016, Sauron
+ *  © 2013—2017, Sauron
  ******************************************************************************/
 
 #include <arpa/inet.h>

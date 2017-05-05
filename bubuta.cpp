@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Bubuta mobile chat protocol sniffer
  *  
- *  © 2014—2016, Sauron
+ *  © 2014—2017, Sauron
  ******************************************************************************/ 
 
 #include <arpa/inet.h>
