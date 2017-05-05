@@ -150,10 +150,10 @@ string BubutaSniffer::dump(bool incoming, Reader &rawInput) {
             output << payload << "\n";
         }
         catch (ZlibException ze) {
-            output << "\nCould not uncompress packet. Raw dump:\n" << payload;
+            output << "\n[!] Could not uncompress packet. Raw dump:\n" << payload;
         }
         catch (DumpException de) {
-            output << "\nCould not decode packet. Raw dump:\n" << payload;
+            output << "\n[!] Could not decode packet. Raw dump:\n" << payload;
         }
         
         if (foodgroup==0) {
