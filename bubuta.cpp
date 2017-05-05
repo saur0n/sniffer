@@ -24,7 +24,7 @@ using std::vector;
 
 class ZlibException {};
 
-int uncompressGzip(Bytef * dest, uLongf * destLen, const Bytef * source, uLong sourceLen) {
+static int uncompressGzip(Bytef * dest, uLongf * destLen, const Bytef * source, uLong sourceLen) {
     z_stream stream;
 
     stream.next_in = (z_const Bytef *)source;
@@ -62,13 +62,13 @@ vector<uint8_t> uncompress(const vector<uint8_t> &data) {
     vector<uint8_t> uncData(uncDataLength);
     int retval=Z_OK;
     do {
-        retval=uncompressGzip(&uncData[0],&uncDataLength,&data[0],data.size());
+        retval=uncompressGzip(&uncData[0], &uncDataLength, &data[0], data.size());
         if (retval==Z_BUF_ERROR)
             uncData.resize(uncDataLength=uncData.size()*2+1);
     } while (retval==Z_BUF_ERROR);
     if (retval!=Z_OK)
         throw ZlibException();
-    return vector<uint8_t>(uncData.begin(),uncData.begin()+uncDataLength);
+    return vector<uint8_t>(uncData.begin(), uncData.begin()+uncDataLength);
 }
 
 static void printByte(ostream &stream, uint8_t byte) {
@@ -119,7 +119,7 @@ BubutaSniffer::BubutaSniffer() {}
 string BubutaSniffer::dump(bool incoming, Reader &rawInput) {
     extern ostream &operator <<(ostream &, const vector<uint8_t> &);
     
-    BubutaReader input(rawInput,key);
+    BubutaReader input(rawInput, key);
     uint32_t length=ntohl(uint32_t(input));
     //((length>>24)&0xff)+((length>>16)&0xff+((length>>8)&0xff)+length&0xff;
     uint8_t checksum=uint8_t(input);
@@ -139,14 +139,15 @@ string BubutaSniffer::dump(bool incoming, Reader &rawInput) {
             output << ", flags=" << std::hex << int(flags) << std::dec;
         
         vector<uint8_t> payload(length-4);
-        input.read(&payload[0],payload.size());
+        input.read(&payload[0], payload.size());
         
         output << "]--\n";
         try {
             if (flags&1)
                 payload=uncompress(payload);
-            dump(payload,output);
+            dump(payload, output);
             output << "\n";
+            output << payload << "\n";
         }
         catch (ZlibException ze) {
             output << "\nCould not uncompress packet. Raw dump:\n" << payload;
@@ -177,14 +178,14 @@ string BubutaSniffer::dump(bool incoming, Reader &rawInput) {
 #if 0
                     output << "Timestamp & key: `";
                     for (size_t i=10; i<payload.size(); i++)
-                        printByte(output,payload[i]^uint8_t($key->key[i%key.size()]));
+                        printByte(output, payload[i]^uint8_t($key->key[i%key.size()]));
                     output << "`\n";
 #endif
                 }
             }
             else if (type==1) {
                 key=vector<uint8_t>(payload.size()-11);
-                memcpy(&key[0],&payload[11],key.size());
+                memcpy(&key[0], &payload[11], key.size());
             }
         }
     }
@@ -270,7 +271,7 @@ void BubutaSniffer::dump(const vector<uint8_t> &frame, ostream &stream) {
                     stream << esc;
                 else {
                     stream << "\\x";
-                    printByte(stream,c);
+                    printByte(stream, c);
                 }
             }
             else {

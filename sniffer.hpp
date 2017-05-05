@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-typedef std::pair<const char *,uint16_t> HostAddress;
+typedef std::pair<const char *, uint16_t> HostAddress;
 
 /** Sniffer error **/
 class Error {
@@ -43,7 +43,7 @@ public:
     template <typename T>
     explicit operator T() {
         T result;
-        read(&result,sizeof(result));
+        read(&result, sizeof(result));
         return result;
     }
 };
@@ -82,13 +82,13 @@ public:
     virtual std::string dump(bool incoming, Reader &input)=0;
 };
 
-#define REGISTER_PROTOCOL(class,name,description,version) \
+#define REGISTER_PROTOCOL(class, name, description, version) \
     Protocol * class##Factory() { \
         return new class(); \
     } \
     __attribute__((constructor)) \
     void class##Initialize() { \
-        return Protocol::add(name,description,version,class##Factory,class::init); \
+        return Protocol::add(name, description, version, class##Factory, class::init); \
     }
 
 #endif
