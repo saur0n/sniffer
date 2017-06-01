@@ -233,7 +233,7 @@ private:
     /** Protocol plugin instance **/
     Protocol * protocol;
     /**/
-    std::mutex logMutex;
+    static std::mutex logMutex;
 };
 
 Sniffer::Sniffer(const Plugin &plugin) {
@@ -250,7 +250,7 @@ Sniffer::~Sniffer() {
 
 void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
     string dumpText=protocol->dump(incoming, reader);
-    std::unique_lock<std::mutex> logLock(logMutex);
+    std::lock_guard<std::mutex> logLock(logMutex);
     ostringstream header;
     time_t now=time(0);
     const char * timestamp=ctime(&now);
@@ -262,6 +262,8 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
         log << '=';
     log << endl << dumpText << endl;
 }
+
+std::mutex Sniffer::logMutex;
 
 /******************************************************************************/
 
