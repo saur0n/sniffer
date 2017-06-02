@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-typedef std::pair<const char *, uint16_t> HostAddress;
+typedef std::pair<std::string, uint16_t> HostAddress;
 
 /** Sniffer error **/
 class Error {

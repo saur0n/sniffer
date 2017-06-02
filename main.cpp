@@ -65,7 +65,7 @@ namespace posix {
         return retval;
     }
     
-    ssize_t write(int fd, void * buffer, size_t length) {
+    ssize_t write(int fd, const void * buffer, size_t length) {
         ssize_t retval=::write(fd, buffer, length);
         if (retval<0)
             Error::raise("writing to network");
@@ -145,22 +145,71 @@ void readFully(int stream, void * _buffer, size_t length) {
 }
 
 /** Parse HOST:PORT string **/
-HostAddress parseHostAddress(char * address) {
-    char * colon=strchr(address, ':');
+static HostAddress parseHostAddress(const char * address) {
+    const char * colon=strchr(address, ':');
     if (!colon)
         throw "invalid argument format";
     uint16_t remotePort=atoi(colon+1); // TODO: C++11
     if (remotePort==0)
         throw "invalid remote port number";
-    *colon='\0';
-    return HostAddress(address, remotePort);
+    return HostAddress(string(address, colon-address), remotePort);
 }
 
 /** Read one byte from stream **/
-uint8_t readByte(int stream) {
+static uint8_t readByte(int stream) {
     uint8_t result;
     if (read(stream, &result, sizeof(result))!=sizeof(result))
         Error::raise("reading byte");
+    return result;
+}
+
+/** Write one byte to stream **/
+static void writeByte(int stream, uint8_t value) {
+    posix::write(stream, &value, sizeof(uint8_t));
+}
+
+/** Read a word from stream **/
+static uint16_t readWord(int stream) {
+    uint16_t result;
+    readFully(stream, &result, sizeof(result));
+    return ntohs(result);
+}
+
+/** Write a word to stream **/
+static void writeWord(int stream, uint16_t value) {
+    value=htons(value);
+    posix::write(stream, &value, sizeof(value));
+}
+
+/** Read a long integer from stream **/
+static uint32_t readLong(int stream) {
+    uint32_t result;
+    readFully(stream, &result, sizeof(result));
+    return ntohl(result);
+}
+
+/** Write a long integer to stream **/
+static void writeLong(int stream, uint32_t value) {
+    value=htonl(value);
+    posix::write(stream, &value, sizeof(value));
+}
+
+/** Read a zero-terminated string from stream **/
+static string readStringZ(int stream) {
+    string result;
+    char ch=0;
+    do {
+        readFully(stream, &ch, 1);
+        if (ch)
+            result.push_back(ch);
+    } while (ch);
+    return result;
+}
+
+/** Read a string with prefixed length from stream **/
+static string readString(int stream) {
+    string result(readByte(stream), '\0');
+    readFully(stream, &result[0], result.length());
     return result;
 }
 
@@ -225,6 +274,10 @@ public:
 protected:
     /** Dump next packet **/
     void dump(ostream &log, bool incoming, Reader &reader);
+    /** Start incoming and outgoing threads **/
+    void startThreads(ostream &log);
+    /**/
+    virtual void threadFunc(ostream &log, bool incoming)=0;
     
 private:
     int client;
@@ -263,6 +316,16 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
     log << endl << dumpText << endl;
 }
 
+void Sniffer::startThreads(ostream &log) {
+    // Start client-to-server thread
+    std::thread c2sThread(&Sniffer::threadFunc, this, std::ref(log), false);
+    c2sThread.detach();
+    
+    // Start server-to-client thread
+    std::thread s2cThread(&Sniffer::threadFunc, this, std::ref(log), true);
+    s2cThread.detach();
+}
+
 std::mutex Sniffer::logMutex;
 
 /******************************************************************************/
@@ -290,67 +353,126 @@ private:
     /** Outgoing thread ID **/
     std::thread::id c2s;
     /** Connect to server **/
-    void initialize(ostream &log, HostAddress remote);
+    void initialize(HostAddress remote);
     /** Thread function **/
     void threadFunc(ostream &log, bool incoming);
 };
 
 StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client,
         HostAddress remote) : Sniffer(plugin), client(client), c2s(0) {
-    initialize(log, remote);
+    initialize(remote);
+    startThreads(log);
 }
 
 StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         Sniffer(plugin), client(client), c2s(0) {
-    char addressBuf[32];
-    
-    struct SocksRequest {
-        uint8_t command;
-        uint16_t port;
-        uint32_t address;
-    } __attribute__((packed)) rq;
-    struct SocksResponse {
-        uint8_t null;
-        uint8_t status;
-        uint8_t reserved[6];
-    } __attribute__((packed)) rs;
-    memset(&rs, 0, sizeof(rs));
-    rs.status=0x5a;
-    
-    // Process SOCKS request
-    uint8_t version=0;
-    readFully(client, &version, 1);
-    if (version!=4) {
+    uint8_t version=readByte(client);
+    if (version==4) {
+        // Process SOCKS4 request
+        struct Socks4Request {
+            uint8_t command;
+            uint16_t port;
+            uint32_t address;
+        } __attribute__((packed)) rq;
+        readFully(client, &rq, sizeof(rq));
+        string username=readStringZ(client);
+        
+        uint8_t status=0x5a;
+        if (rq.command!=1) {
+            cerr << "SOCKSv4: unknown command " << int(rq.command) << endl;
+            status=0x5b;
+        }
+        char addressBuf[32];
+        if (!inet_ntop(AF_INET, &(rq.address), addressBuf, 32)) {
+            cerr << "SOCKSv4: inet_pton() failed" << endl;
+            status=0x5b;
+        }
+        if (!username.empty())
+            cerr << "SOCKSv4: client sent username: " << username << endl;
+        
+        // Send SOCKS4 response
+        struct Socks4Response {
+            uint8_t null;
+            uint8_t status;
+            uint8_t reserved[6];
+        } __attribute__((packed)) rs;
+        memset(&rs, 0, sizeof(rs));
+        rs.status=status;
+        posix::write(client, &rs, sizeof(rs));
+        if (rs.status!=0x5a)
+            throw Error("SOCKSv4 connection", EPROTO);
+        
+        initialize({addressBuf, ntohs(rq.port)});
+    }
+    else if (version==5) {
+        // Process initial SOCKS5 request
+        string authMethods=readString(client);
+        uint8_t preferredMethod=authMethods.find('\0')==string::npos?0xff:0x00;
+        cerr << "SOCKSv5: authentication methods: ";
+        for (size_t i=0; i<authMethods.size(); i++) {
+            if (i>0)
+                cerr << ", ";
+            cerr << unsigned(authMethods[i]);
+        }
+        cerr << endl;
+        
+        // Send response about authentication method
+        writeByte(client, 5);
+        writeByte(client, preferredMethod);
+        
+        // Process SOCKS5 connection request
+        readByte(client);
+        uint8_t command=readByte(client), status=0x00;
+        if (command!=1) {
+            cerr << "SOCKSv5: unknown command " << int(command) << endl;
+            status=0x07;
+        }
+        readByte(client);
+        uint8_t addressType=readByte(client);
+        HostAddress remote;
+        if (addressType==1) {
+            char buffer[32];
+            uint32_t address=htonl(readLong(client));
+            if (!inet_ntop(AF_INET, &address, buffer, 32)) {
+                cerr << "SOCKSv5: inet_pton() failed" << endl;
+                status=0x04;
+            }
+            remote.first=buffer;
+        }
+        else if (addressType==3) {
+            remote.first=readString(client);
+        }
+        else {
+            cerr << "SOCKSv5: unknown address type " << int(addressType) << endl;
+            status=0x08;
+        }
+        remote.second=readWord(client);
+        cerr << "DEBUG: port is " << remote.second << endl;
+        
+        if (status==0) {
+            // Connect to the target server
+            initialize(remote);
+            
+            // Send SOCKS5 connection response
+            writeByte(client, 5);
+            writeByte(client, status);
+            writeByte(client, 0);
+            writeByte(client, 1);
+            writeLong(client, 0x7f000001);
+            writeWord(client, remote.second);
+        }
+        else {
+            writeByte(client, 5);
+            writeByte(client, status);
+            throw Error("SOCKSv5 connection", EPROTO);
+        }
+    }
+    else {
         cerr << "SOCKSv" << (int)version << " is not supported" << endl;
         throw Error("SOCKS version mismatch", EPROTO);
     }
     
-    readFully(client, &rq, sizeof(rq));
-    string username;
-    char ch=0;
-    do {
-        readFully(client, &ch, 1);
-        if (ch)
-            username.push_back(ch);
-    } while (ch);
-    
-    if (rq.command!=1) {
-        cerr << "Command " << rq.command << " is not implemented" << endl;
-        rs.status=0x5b;
-    }
-    if (!inet_ntop(AF_INET, &(rq.address), addressBuf, 32)) {
-        cerr << "inet_pton() failed\n";
-        rs.status=0x5b;
-    }
-    if (!username.empty())
-        cerr << "SOCKS client sent username: " << username << endl;
-    
-    // Send response
-    posix::write(client, &rs, sizeof(rs));
-    if (rs.status!=0x5a)
-        throw Error("SOCKSv4 connection", EPROTO);
-    
-    initialize(log, HostAddress(addressBuf, ntohs(rq.port)));
+    startThreads(log);
 }
 
 StreamSniffer::~StreamSniffer() {
@@ -364,7 +486,7 @@ void StreamSniffer::read(void * buffer, size_t length) {
     posix::write(incoming?client:server, buffer, length);
 }
 
-void StreamSniffer::initialize(ostream &log, HostAddress remote) {
+void StreamSniffer::initialize(HostAddress remote) {
     // Get server network address
     char service[16];
     sprintf(service, "%d", remote.second);
@@ -372,9 +494,9 @@ void StreamSniffer::initialize(ostream &log, HostAddress remote) {
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family=AF_INET; /* IPv4 only */
     hints.ai_socktype=SOCK_STREAM; /* TCP */
-    int ret=getaddrinfo(remote.first, service, &hints, &result);
+    int ret=getaddrinfo(remote.first.c_str(), service, &hints, &result);
     if (ret!=0)
-        throw Error(remote.first, EHOSTUNREACH);
+        throw Error("connecting", EHOSTUNREACH);
     
     // Connect to server
     cerr << "Connecting to " << remote.first << ':' << remote.second << "…" << endl;
@@ -384,14 +506,6 @@ void StreamSniffer::initialize(ostream &log, HostAddress remote) {
     if (connect(server, result->ai_addr, result->ai_addrlen)<0)
         Error::raise("connecting to host");
     freeaddrinfo(result);
-    
-    // Statr client-to-server thread
-    std::thread c2sThread(&StreamSniffer::threadFunc, this, std::ref(log), false);
-    c2sThread.detach();
-    
-    // Start server-to-client thread
-    std::thread s2cThread(&StreamSniffer::threadFunc, this, std::ref(log), true);
-    s2cThread.detach();
 }
 
 void StreamSniffer::threadFunc(ostream &log, bool incoming) {
@@ -520,7 +634,7 @@ int main(int argc, char ** argv) {
         };
         
         const Protocol::Options::Type UNSPECIFIED=Protocol::Options::Type(-1);
-        Protocol::Options options={UNSPECIFIED, 0, HostAddress(0, 0), 0};
+        Protocol::Options options={UNSPECIFIED, 0, HostAddress(string(), 0), 0};
         
         do {
             c=getopt_long(argc, argv, "", OPTIONS, 0);
