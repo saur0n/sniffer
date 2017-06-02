@@ -276,6 +276,8 @@ protected:
     void dump(ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
     void startThreads(ostream &log);
+    /** Output beginning of message to cerr and return it **/
+    ostream &error() const;
     /**/
     virtual void threadFunc(ostream &log, bool incoming)=0;
     
@@ -324,6 +326,10 @@ void Sniffer::startThreads(ostream &log) {
     // Start server-to-client thread
     std::thread s2cThread(&Sniffer::threadFunc, this, std::ref(log), true);
     s2cThread.detach();
+}
+
+ostream &Sniffer::error() const {
+    return cerr << "Connection #" << getInstanceId() << ": ";
 }
 
 std::mutex Sniffer::logMutex;
@@ -379,16 +385,16 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         
         uint8_t status=0x5a;
         if (rq.command!=1) {
-            cerr << "SOCKSv4: unknown command " << int(rq.command) << endl;
+            error() << "SOCKSv4: unknown command " << int(rq.command) << endl;
             status=0x5b;
         }
         char addressBuf[32];
         if (!inet_ntop(AF_INET, &(rq.address), addressBuf, 32)) {
-            cerr << "SOCKSv4: inet_pton() failed" << endl;
+            error() << "SOCKSv4: inet_pton() failed" << endl;
             status=0x5b;
         }
         if (!username.empty())
-            cerr << "SOCKSv4: client sent username: " << username << endl;
+            error() << "SOCKSv4: client sent username: " << username << endl;
         
         // Send SOCKS4 response
         struct Socks4Response {
@@ -408,7 +414,7 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         // Process initial SOCKS5 request
         string authMethods=readString(client);
         uint8_t preferredMethod=authMethods.find('\0')==string::npos?0xff:0x00;
-        cerr << "SOCKSv5: authentication methods: ";
+        error() << "SOCKSv5: authentication methods: ";
         for (size_t i=0; i<authMethods.size(); i++) {
             if (i>0)
                 cerr << ", ";
@@ -424,7 +430,7 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         readByte(client);
         uint8_t command=readByte(client), status=0x00;
         if (command!=1) {
-            cerr << "SOCKSv5: unknown command " << int(command) << endl;
+            error() << "SOCKSv5: unknown command " << int(command) << endl;
             status=0x07;
         }
         readByte(client);
@@ -434,7 +440,7 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
             char buffer[32];
             uint32_t address=htonl(readLong(client));
             if (!inet_ntop(AF_INET, &address, buffer, 32)) {
-                cerr << "SOCKSv5: inet_pton() failed" << endl;
+                error() << "SOCKSv5: inet_pton() failed" << endl;
                 status=0x04;
             }
             remote.first=buffer;
@@ -443,11 +449,10 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
             remote.first=readString(client);
         }
         else {
-            cerr << "SOCKSv5: unknown address type " << int(addressType) << endl;
+            error() << "SOCKSv5: unknown address type " << int(addressType) << endl;
             status=0x08;
         }
         remote.second=readWord(client);
-        cerr << "DEBUG: port is " << remote.second << endl;
         
         if (status==0) {
             // Connect to the target server
@@ -468,7 +473,7 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         }
     }
     else {
-        cerr << "SOCKSv" << (int)version << " is not supported" << endl;
+        error() << "SOCKSv" << (int)version << " is not supported" << endl;
         throw Error("SOCKS version mismatch", EPROTO);
     }
     
@@ -499,7 +504,7 @@ void StreamSniffer::initialize(HostAddress remote) {
         throw Error("connecting", EHOSTUNREACH);
     
     // Connect to server
-    cerr << "Connecting to " << remote.first << ':' << remote.second << "…" << endl;
+    error() << "connecting to " << remote.first << ':' << remote.second << "…" << endl;
     server=socket(AF_INET, SOCK_STREAM, 0);
     if (server<0)
         Error::raise("creating socket");
@@ -517,11 +522,10 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
             dump(log, incoming, *this);
     }
     catch (bool) {
-        cerr << "Connection #" << getInstanceId() << ": disconnected from "
-            << (incoming?"server":"client") << endl;
+        error() << "disconnected from " << (incoming?"server":"client") << endl;
     }
     catch (const Error &e) {
-        cerr << "Connection #" << getInstanceId() << ": " << e << endl;
+        error() << e << endl;
     }
 }
 
