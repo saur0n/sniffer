@@ -8,6 +8,7 @@
 #ifndef __SNIFFER_HPP
 #define __SNIFFER_HPP
 
+#include <map>
 #include <string>
 #include <utility>
 
@@ -59,7 +60,7 @@ public:
         DATAGRAM=2
     };
     /** Factory returns new plugin instance **/
-    typedef Protocol * (&Factory)();
+    typedef Protocol * (&Factory)(const std::map<std::string, std::string> &options);
     /** Register plugin in the global registry **/
     static void add(const char * name, const char * description, int version,
         unsigned flags, Factory create);
@@ -69,9 +70,9 @@ public:
     virtual std::string dump(bool incoming, Reader &input)=0;
 };
 
-#define REGISTER_PROTOCOL(class, name, description, flags, version) \
-    Protocol * class##Factory() { \
-        return new class(); \
+#define REGISTER_PROTOCOL(class, name, description, version, flags) \
+    Protocol * class##Factory(const std::map<std::string, std::string> &options) { \
+        return new class(options); \
     } \
     __attribute__((constructor)) \
     void class##Initialize() { \

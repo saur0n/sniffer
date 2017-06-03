@@ -294,15 +294,16 @@ class SnifferController {
     friend class SnifferBase;
 public:
     /**/
-    SnifferController(const Plugin &plugin, ostream &output) : 
-        maxInstanceId(0), plugin(plugin), output(output), alive(true),
-        gcThread(&SnifferController::gcThreadFunc, this) {}
+    SnifferController(const Plugin &plugin, const map<string, string> &options,
+        ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
+        output(output), alive(true), gcThread(&SnifferController::gcThreadFunc,
+        this) {}
     /**/
     ~SnifferController();
     /** Returns stream where sniffers should write to **/
     ostream &getStream() const { return output; }
     /** Create protocol plugin instance **/
-    Protocol * newProtocol() const { return plugin.factory(); }
+    Protocol * newProtocol() const { return plugin.factory(options); }
     /** Called by sniffer to inform that it should be destroyed **/
     void mark(SnifferBase * sniffer);
     
@@ -313,6 +314,7 @@ private:
     SnifferController &operator =(const SnifferController &)=delete;
     unsigned maxInstanceId;
     const Plugin &plugin;
+    map<string, string> options;
     ostream &output;
     bool alive;
     std::mutex gcMutex;
@@ -769,7 +771,6 @@ int main(int argc, char ** argv) {
         // Parse command line arguments
         int help=0, append=0, daemonize=0, c;
         const char * protocol="raw", * output=nullptr;
-        //StringMap options;//TODO
         static struct option OPTIONS[]={
             {   "append",       no_argument,        &append,    1   },
             {   "daemon",       no_argument,        &daemonize, 1   },
@@ -788,14 +789,38 @@ int main(int argc, char ** argv) {
             enum Type { UNSPECIFIED, TCP, UDP, SOCKS, UDPLITE } type;
             HostAddress remote;
             uint16_t localPort;
-            const char * aux;
+            map<string, string> aux;
         } options={Options::UNSPECIFIED};
         
         do {
             c=getopt_long(argc, argv, "", OPTIONS, 0);
             if (c=='*') {
-                // TODO: parse optarg
-                options.aux=optarg;
+                string key, value;
+                enum { KEY, VALUE, DONE } state=KEY;
+                for (const char * oc=optarg; *oc; oc++) {
+                    if (state==KEY) {
+                        if (*oc=='=')
+                            state=VALUE;
+                        else if (*oc==',')
+                            state=DONE;
+                        else
+                            key.push_back(*oc);
+                    }
+                    else if (state==VALUE) {
+                        if (*oc==',')
+                            state=DONE;
+                        else
+                            value.push_back(*oc);
+                    }
+                    if (state==DONE) {
+                        if (!key.empty())
+                            options.aux[key]=value;
+                        key=value=string();
+                        state=KEY;
+                    }
+                }
+                if (!key.empty())
+                    options.aux[key]=value;
             }
             else if (c=='o') {
                 if (output)
@@ -840,7 +865,7 @@ int main(int argc, char ** argv) {
                 cout.rdbuf(&buf);
             }
             
-            SnifferController controller(plugin, cout);
+            SnifferController controller(plugin, options.aux, cout);
             
             // Daemonize sniffer
             if (daemonize) {
