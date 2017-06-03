@@ -801,13 +801,13 @@ int main(int argc, char ** argv) {
                     if (state==KEY) {
                         if (*oc=='=')
                             state=VALUE;
-                        else if (*oc==';')
+                        else if (*oc==',')
                             state=DONE;
                         else
                             key.push_back(*oc);
                     }
                     else if (state==VALUE) {
-                        if (*oc==';')
+                        if (*oc==',')
                             state=DONE;
                         else
                             value.push_back(*oc);
@@ -816,8 +816,11 @@ int main(int argc, char ** argv) {
                         if (!key.empty())
                             options.aux[key]=value;
                         key=value=string();
+                        state=KEY;
                     }
                 }
+                if (!key.empty())
+                    options.aux[key]=value;
             }
             else if (c=='o') {
                 if (output)
