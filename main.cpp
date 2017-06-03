@@ -707,8 +707,7 @@ int help(const char * program) {
 }
 
 template <typename ... T>
-int mainLoop(const char * program, const Plugin &plugin, int listener, T ... args) {
-    SnifferController controller(plugin, cout);
+int mainLoop(const char * program, SnifferController &controller, int listener, T ... args) {
     while (true) {
         // Accept connection from client
         int client=accept(listener, 0, 0);
@@ -812,6 +811,8 @@ int main(int argc, char ** argv) {
                 cout.rdbuf(&buf);
             }
             
+            SnifferController controller(plugin, cout);
+            
             // Daemonize sniffer
             if (daemonize) {
                 cerr << "Daemonizing sniffer" << endl;
@@ -822,7 +823,7 @@ int main(int argc, char ** argv) {
                 if (options.localPort==0)
                     options.localPort=options.remote.second;
                 int listener=listenAt(options.localPort);
-                return mainLoop(argv[0], plugin, listener, options.remote);
+                return mainLoop(argv[0], controller, listener, options.remote);
             }
             else if (options.type==Protocol::Options::UDP) {
                 if (options.localPort==0)
@@ -833,7 +834,7 @@ int main(int argc, char ** argv) {
                 if (options.localPort==0)
                     throw "--port must be specified";
                 int listener=listenAt(options.localPort);
-                return mainLoop(argv[0], plugin, listener);
+                return mainLoop(argv[0], controller, listener);
             }
             else
                 throw "this cannot happens";
