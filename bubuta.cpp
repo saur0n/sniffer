@@ -105,8 +105,6 @@ public:
     BubutaSniffer();
     /** Dump Bubuta packet **/
     string dump(bool incoming, Reader &input);
-    /** Initialize plugin **/
-    static bool init(Protocol::Options &options);
     
 private:
     enum DumpException { PREMATURE_EOF, UNKNOWN_TYPE };
@@ -286,13 +284,10 @@ void BubutaSniffer::dump(const vector<uint8_t> &frame, ostream &stream) {
     ds.dumpArrayTo(stream);
 }
 
-bool BubutaSniffer::init(Protocol::Options &options) {
-    return options.type==Options::TCP||options.type==Options::SOCKS;
-}
-
 REGISTER_PROTOCOL(
     BubutaSniffer,
     "bubuta",
     "Bubuta chat protocol sniffer",
-    1
+    1,
+    Protocol::STREAM
 );
