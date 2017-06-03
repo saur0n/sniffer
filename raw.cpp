@@ -23,8 +23,6 @@ public:
     RawSniffer() : lastWriter(LW_NONE) {}
     /** Dump Raw packet **/
     string dump(bool incoming, Reader &input);
-    /** Initialize plugin **/
-    static bool init(Protocol::Options &options);
     
 private:
     enum Writer { LW_NONE, LW_INCOMING, LW_OUTGOING } lastWriter;
@@ -56,14 +54,11 @@ string RawSniffer::dump(bool incoming, Reader &input) {
     return out.str();
 }
 
-bool RawSniffer::init(Protocol::Options &options) {
-    return options.type==Options::TCP||options.type==Options::SOCKS;
-}
-
 REGISTER_PROTOCOL(
     RawSniffer,
     "raw",
-    "Universal raw sniffer",
-    1
+    "Universal raw stream sniffer",
+    1,
+    Protocol::STREAM
 );
  
