@@ -294,9 +294,13 @@ private:
     std::thread c2sThread;
     /** Thread for interception incoming data **/
     std::thread s2cThread;
+    /** Private thread function **/
+    void _threadFunc(ostream &log, bool incoming);
+    /** Destruction of this object was started **/
+    bool deleted;
 };
 
-Sniffer::Sniffer(const Plugin &plugin) {
+Sniffer::Sniffer(const Plugin &plugin) : deleted(false) {
     static unsigned maxInstanceId=1;
     instanceId=maxInstanceId++;
     protocol=plugin.factory();
@@ -335,6 +339,24 @@ void Sniffer::startThreads(ostream &log) {
 
 ostream &Sniffer::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
+}
+
+void Sniffer::_threadFunc(ostream &log, bool incoming) {
+    try {
+        threadFunc(log, incoming);
+    }
+    catch (bool) {
+        error() << "disconnected from " << (incoming?"server":"client") << endl;
+    }
+    catch (const Error &e) {
+        error() << e << endl;
+    }
+    catch (...) {
+        error() << "unknown exception caught" << endl;
+    }
+    
+    if (!deleted)
+        delete this;
 }
 
 std::mutex Sniffer::logMutex;
@@ -521,21 +543,11 @@ void StreamSniffer::initialize(HostAddress remote) {
 }
 
 void StreamSniffer::threadFunc(ostream &log, bool incoming) {
-    try {
-        if (!incoming)
-            c2s=std::this_thread::get_id();
-        
-        while (true)
-            dump(log, incoming, *this);
-    }
-    catch (bool) {
-        error() << "disconnected from " << (incoming?"server":"client") << endl;
-    }
-    catch (const Error &e) {
-        error() << e << endl;
-    }
+    if (!incoming)
+        c2s=std::this_thread::get_id();
     
-    delete this;
+    while (true)
+        dump(log, incoming, *this);
 }
 
 /******************************************************************************/
