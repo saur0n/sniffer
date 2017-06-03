@@ -10,7 +10,6 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
-#include <cstdio> //DEBUG
 #include <cstring>
 #include <fstream>
 #include <getopt.h>
@@ -252,7 +251,6 @@ public:
 /** Add protocol to the protocol registry **/
 void Protocol::add(const char * name, const char * description, int version,
         Protocol::Factory factory, Protocol::Initializer initializer) {
-    ///fprintf(stderr, "Adding protocol %s...\n", name);
     const Plugin plugin={name, description, version, factory, initializer};
     Registry::instance().push_back(plugin);
 }
@@ -298,14 +296,12 @@ private:
 };
 
 void SnifferController::add(SnifferBase * sniffer) {
-    fprintf(stderr, "GC: add (%p)\n", sniffer);
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.insert({sniffer, true});
 }
 
 void SnifferController::mark(SnifferBase * sniffer) {
-    fprintf(stderr, "GC: mark (%p)\n", sniffer);
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer) {
         auto i=sniffers.find(sniffer);
@@ -313,7 +309,6 @@ void SnifferController::mark(SnifferBase * sniffer) {
             sniffers[sniffer]=false;
     }
     gc.notify_all();
-    fprintf(stderr, "GC: mark (%p) done\n", sniffer);
 }
 
 void SnifferController::gcThreadFunc() {
@@ -321,27 +316,19 @@ void SnifferController::gcThreadFunc() {
         set<SnifferBase *> toBeDeleted;
         {
             std::unique_lock<std::mutex> lock(gcMutex);
-            fprintf(stderr, "GC: waiting for signal\n");
             gc.wait(lock);
-            fprintf(stderr, "GC: starting cycle\n");
-            
             for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
                 if (!i->second)
                     toBeDeleted.insert(i->first);
         }
         
         for (auto i=toBeDeleted.begin(); i!=toBeDeleted.end(); ++i) {
-            fprintf(stderr, "GC: deleting sniffer %p\n", *i);
             try {
                 delete *i;
             }
-            catch (...) {
-                fprintf(stderr, "GC: delete should not throw!\n");
-            }
+            catch (...) {}
             sniffers.erase(*i);
         }
-        
-        fprintf(stderr, "GC: end of cycle\n");
     }
 }
 
@@ -408,7 +395,6 @@ Sniffer::~Sniffer() {
     if (s2cThread.joinable())
         s2cThread.join();
     delete protocol;
-    error() << "DESTROYED" << endl;
 }
 
 void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
