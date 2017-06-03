@@ -703,7 +703,6 @@ int help(const char * program) {
     cout << endl;
     cout << "Supported PROTOCOLs:" << endl;
     Registry &registry=Registry::instance();
-    ///cout << "Total " << registry.size() << endl;
     for (auto i=registry.begin(); i!=registry.end(); ++i) {
         cout << "\e[0;34m" << i->name << "\e[0m (v. " << i->version << ")" << endl;
         cout << "\t" << i->description << endl;
