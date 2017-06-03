@@ -7,6 +7,7 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include <map>
 #include <mutex>
 #include <netdb.h>
+#include <set>
 #include <sstream>
 #include <sys/types.h>
 #include <thread>
@@ -31,6 +33,7 @@ using std::map;
 using std::ostream;
 using std::ostringstream;
 using std::pair;
+using std::set;
 using std::string;
 using std::vector;
 
@@ -39,6 +42,13 @@ namespace posix {
         int result=::socket(family, type, protocol);
         if (result<0)
             Error::raise("creating socket");
+        return result;
+    }
+    
+    int accept(int socket, struct sockaddr * addr, socklen_t * len) {
+        int result=::accept(socket, addr, len);
+        if (result<0)
+            Error::raise("accepting a connection");
         return result;
     }
     
@@ -228,13 +238,20 @@ struct Plugin {
 class Registry : public vector<Plugin> {
 public:
     /** Thrown on attempt to access non-existent plugin **/
-    class PluginNotFoundException {};
+    class PluginNotFoundException {
+    public:
+        PluginNotFoundException(const char * name) : name(name) {}
+        const char * getName() const { return name; }
+        
+    private:
+        const char * name;
+    };
     /** Find plugin by name **/
     const Plugin &operator [](const char * name) {
         for (auto i=begin(); i!=end(); i++)
             if (!strcasecmp(name, i->name))
                 return *i;
-        throw PluginNotFoundException();
+        throw PluginNotFoundException(name);
     }
     /** Global plugin registry **/
     static Registry &instance() {
@@ -248,7 +265,6 @@ public:
 /** Add protocol to the protocol registry **/
 void Protocol::add(const char * name, const char * description, int version,
         Protocol::Factory factory, Protocol::Initializer initializer) {
-    ///fprintf(stderr, "Adding protocol %s...\n", name);
     const Plugin plugin={name, description, version, factory, initializer};
     Registry::instance().push_back(plugin);
 }
@@ -261,49 +277,145 @@ const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
 
-/** Abstract protocol sniffer **/
-class Sniffer {
+class SnifferBase {
 public:
-    /**/
-    explicit Sniffer(const Plugin &plugin);
-    /** Close connection and destroy plugin **/
-    virtual ~Sniffer();
+    SnifferBase(class SnifferController &controller);
+    virtual ~SnifferBase();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
+    
+protected:
+    SnifferController &controller;
+    unsigned instanceId;
+};
+
+/** Object for controlling life cycle of sniffers **/
+class SnifferController {
+    friend class SnifferBase;
+public:
+    /**/
+    SnifferController(const Plugin &plugin, ostream &output) : 
+        maxInstanceId(0), plugin(plugin), output(output), alive(true),
+        gcThread(&SnifferController::gcThreadFunc, this) {}
+    /**/
+    ~SnifferController();
+    /** Returns stream where sniffers should write to **/
+    ostream &getStream() const { return output; }
+    /** Create protocol plugin instance **/
+    Protocol * newProtocol() const { return plugin.factory(); }
+    /** Called by sniffer to inform that it should be destroyed **/
+    void mark(SnifferBase * sniffer);
+    
+private:
+    enum State { Alive, Marked, Deleted };
+    
+    SnifferController(const SnifferController &)=delete;
+    SnifferController &operator =(const SnifferController &)=delete;
+    unsigned maxInstanceId;
+    const Plugin &plugin;
+    ostream &output;
+    bool alive;
+    std::mutex gcMutex;
+    std::thread gcThread;
+    std::condition_variable gc;
+    map<SnifferBase *, State> sniffers;
+    void gcThreadFunc();
+    
+    /** Called by sniffer to inform that it was created **/
+    void add(SnifferBase * sniffer);
+    /** Called by sniffer to inform that it was deleted **/
+    void remove(SnifferBase * sniffer);
+};
+
+SnifferBase::SnifferBase(class SnifferController &controller) :
+        controller(controller), instanceId(++controller.maxInstanceId) {
+    controller.add(this);
+}
+
+SnifferBase::~SnifferBase() {
+    controller.remove(this);
+}
+
+void SnifferController::add(SnifferBase * sniffer) {
+    std::unique_lock<std::mutex> lock(gcMutex);
+    if (sniffer)
+        sniffers.insert({sniffer, Alive});
+}
+
+void SnifferController::remove(SnifferBase * sniffer) {
+    std::unique_lock<std::mutex> lock(gcMutex);
+    if (sniffer)
+        sniffers.erase(sniffer);
+}
+
+void SnifferController::mark(SnifferBase * sniffer) {
+    std::unique_lock<std::mutex> lock(gcMutex);
+    if (sniffer) {
+        auto i=sniffers.find(sniffer);
+        if (i!=sniffers.end())
+            sniffers[sniffer]=Marked;
+    }
+    gc.notify_all();
+}
+
+void SnifferController::gcThreadFunc() {
+    while (alive) {
+        set<SnifferBase *> toBeDeleted;
+        {
+            std::unique_lock<std::mutex> lock(gcMutex);
+            gc.wait(lock);
+            for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
+                if (i->second==Marked)
+                    toBeDeleted.insert(i->first);
+        }
+        
+        for (auto i=toBeDeleted.begin(); i!=toBeDeleted.end(); ++i)
+            delete *i;
+    }
+}
+
+SnifferController::~SnifferController() {
+    alive=false;
+    mark(nullptr);
+    gcThread.join();
+    for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
+        delete i->first;
+}
+
+/******************************************************************************/
+
+/** Abstract protocol sniffer **/
+class Sniffer : public SnifferBase {
+public:
+    /**/
+    explicit Sniffer(SnifferController &controller);
+    /** Close connection and destroy plugin **/
+    virtual ~Sniffer();
     
 protected:
     /** Dump next packet **/
     void dump(ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
-    void startThreads(ostream &log);
-    /** Called by thread to notify that it is finished **/
-    void notifyDestroyed(bool incoming);
+    void start(SnifferController &controller);
     /** Output beginning of message to cerr and return it **/
     ostream &error() const;
-    /**/
+    /** This function should be overridden by subclasses **/
     virtual void threadFunc(ostream &log, bool incoming)=0;
     
 private:
-    /** Unique instance ID **/
-    unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
-    /**/
+    /** Mutex for synchronization of access to output log **/
     static std::mutex logMutex;
     /** Thread for interception outgoing data **/
     std::thread c2sThread;
     /** Thread for interception incoming data **/
     std::thread s2cThread;
     /** Private thread function **/
-    void _threadFunc(ostream &log, bool incoming);
-    /** Destruction of this object was started **/
-    bool deleted;
+    void _threadFunc(SnifferController &controller, bool incoming);
 };
 
-Sniffer::Sniffer(const Plugin &plugin) : deleted(false) {
-    static unsigned maxInstanceId=1;
-    instanceId=maxInstanceId++;
-    protocol=plugin.factory();
+Sniffer::Sniffer(SnifferController &controller) : SnifferBase(controller), protocol(controller.newProtocol()) {
     if (!protocol)
         throw "failed to instantiate protocol plugin";
 }
@@ -314,7 +426,6 @@ Sniffer::~Sniffer() {
     if (s2cThread.joinable())
         s2cThread.join();
     delete protocol;
-    error() << "DESTROYED" << endl;
 }
 
 void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
@@ -332,18 +443,18 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
     log << endl << dumpText << endl;
 }
 
-void Sniffer::startThreads(ostream &log) {
-    c2sThread=std::thread(&Sniffer::threadFunc, this, std::ref(log), false);
-    s2cThread=std::thread(&Sniffer::threadFunc, this, std::ref(log), true);
+void Sniffer::start(SnifferController &controller) {
+    c2sThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), false);
+    s2cThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), true);
 }
 
 ostream &Sniffer::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
 }
 
-void Sniffer::_threadFunc(ostream &log, bool incoming) {
+void Sniffer::_threadFunc(SnifferController &controller, bool incoming) {
     try {
-        threadFunc(log, incoming);
+        threadFunc(controller.getStream(), incoming);
     }
     catch (bool) {
         error() << "disconnected from " << (incoming?"server":"client") << endl;
@@ -355,8 +466,7 @@ void Sniffer::_threadFunc(ostream &log, bool incoming) {
         error() << "unknown exception caught" << endl;
     }
     
-    if (!deleted)
-        delete this;
+    controller.mark(this);
 }
 
 std::mutex Sniffer::logMutex;
@@ -367,10 +477,9 @@ std::mutex Sniffer::logMutex;
 class StreamSniffer : public Sniffer, private Reader {
 public:
     /** Create TCP sniffer **/
-    StreamSniffer(const Plugin &plugin, ostream &log, int client,
-        HostAddress remote);
+    StreamSniffer(SnifferController &controller, int client, HostAddress remote);
     /** Create TCP sniffer working as SOCKS proxy **/
-    StreamSniffer(const Plugin &plugin, ostream &log, int client);
+    StreamSniffer(SnifferController &controller, int client);
     /** Close connections **/
     ~StreamSniffer();
     
@@ -391,14 +500,14 @@ private:
     void threadFunc(ostream &log, bool incoming);
 };
 
-StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client,
-        HostAddress remote) : Sniffer(plugin), client(client), c2s(0) {
+StreamSniffer::StreamSniffer(SnifferController &controller, int client,
+        HostAddress remote) : Sniffer(controller), client(client), c2s(0) {
     initialize(remote);
-    startThreads(log);
+    start(controller);
 }
 
-StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
-        Sniffer(plugin), client(client), c2s(0) {
+StreamSniffer::StreamSniffer(SnifferController &controller, int client) :
+        Sniffer(controller), client(client), c2s(0) {
     uint8_t version=readByte(client);
     if (version==4) {
         // Process SOCKS4 request
@@ -504,7 +613,7 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         throw Error("SOCKS version mismatch", EPROTO);
     }
     
-    startThreads(log);
+    start(controller);
 }
 
 StreamSniffer::~StreamSniffer() {
@@ -556,7 +665,7 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
 class DatagramSniffer : public Sniffer {
 public:
     /** Initialize UDP sniffer **/
-    DatagramSniffer(const Plugin &plugin, ostream &log, uint16_t localPort,
+    DatagramSniffer(SnifferController &controller, ostream &log, uint16_t localPort,
         HostAddress remote);
     
 private:
@@ -566,8 +675,8 @@ private:
     
 };
 
-DatagramSniffer::DatagramSniffer(const Plugin &plugin, ostream &log,
-        uint16_t localPort, HostAddress remote) : Sniffer(plugin) {
+DatagramSniffer::DatagramSniffer(SnifferController &controller, ostream &log,
+        uint16_t localPort, HostAddress remote) : Sniffer(controller) {
     log << "Datagram sniffer log" << endl;
     log << "Date: <DATE HERE>" << endl;
     log << "Port: <PORT>" << endl;
@@ -601,7 +710,6 @@ int help(const char * program) {
     cout << endl;
     cout << "Supported PROTOCOLs:" << endl;
     Registry &registry=Registry::instance();
-    ///cout << "Total " << registry.size() << endl;
     for (auto i=registry.begin(); i!=registry.end(); ++i) {
         cout << "\e[0;34m" << i->name << "\e[0m (v. " << i->version << ")" << endl;
         cout << "\t" << i->description << endl;
@@ -609,20 +717,27 @@ int help(const char * program) {
     return 0;
 }
 
+static sig_atomic_t working=1;
+
 template <typename ... T>
-int mainLoop(const char * program, const Plugin &plugin, int listener, T ... args) {
-    while (true) {
+int mainLoop(const char * program, SnifferController &controller, int listener, T ... args) {
+    while (working) {
         // Accept connection from client
-        int client=accept(listener, 0, 0);
-        cerr << "New connection from client" << endl; // TODO print ip:port
+        int client=-1;
         try {
-            new StreamSniffer(plugin, cout, client, args...);
+            client=posix::accept(listener, 0, 0);
+            cerr << "New connection from client" << endl; // TODO print ip:port
+            new StreamSniffer(controller, client, args...);
         }
         catch (const Error &e) {
-            cerr << program << ": " << e << endl;
-            close(client);
+            if (e.getErrno()!=EINTR) {
+                cerr << program << ": " << e << endl;
+                if (client>=0)
+                    close(client);
+            }
         }
     }
+    close(listener);
     cerr << "Exited from infinite loop." << endl;
     return 0;
 }
@@ -632,17 +747,27 @@ int mainLoop(const char * program, const Plugin &plugin, int listener, T ... arg
         throw "invalid combination of options"; \
     options.type=s;
 
+void sighandler(int sigNo) {
+    working=0;
+}
+
 int main(int argc, char ** argv) {
     try {
         // Set default locale
         setlocale(LC_ALL, "");
         
-        // Get rid of fucking SIGPIPE
+        // Set signal behaviour
         signal(SIGPIPE, SIG_IGN);
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler=sighandler;
+        sigaction(SIGHUP, &sa, nullptr);
+        sigaction(SIGINT, &sa, nullptr);
+        sigaction(SIGTERM, &sa, nullptr);
         
         // Parse command line arguments
         int help=0, append=0, daemonize=0, c;
-        const char * protocol="raw", * output=0;
+        const char * protocol="raw", * output=nullptr;
         //StringMap options;//TODO
         static struct option OPTIONS[]={
             {   "append",       no_argument,        &append,    1   },
@@ -714,6 +839,8 @@ int main(int argc, char ** argv) {
                 cout.rdbuf(&buf);
             }
             
+            SnifferController controller(plugin, cout);
+            
             // Daemonize sniffer
             if (daemonize) {
                 cerr << "Daemonizing sniffer" << endl;
@@ -724,7 +851,7 @@ int main(int argc, char ** argv) {
                 if (options.localPort==0)
                     options.localPort=options.remote.second;
                 int listener=listenAt(options.localPort);
-                return mainLoop(argv[0], plugin, listener, options.remote);
+                return mainLoop(argv[0], controller, listener, options.remote);
             }
             else if (options.type==Protocol::Options::UDP) {
                 if (options.localPort==0)
@@ -735,14 +862,14 @@ int main(int argc, char ** argv) {
                 if (options.localPort==0)
                     throw "--port must be specified";
                 int listener=listenAt(options.localPort);
-                return mainLoop(argv[0], plugin, listener);
+                return mainLoop(argv[0], controller, listener);
             }
             else
                 throw "this cannot happens";
         }
     }
     catch (const Registry::PluginNotFoundException &e) {
-        cerr << "Protocol with specified name was not found.\n";
+        cerr << "Protocol with name «" << e.getName() << "» was not found.\n";
         cerr << "See " << argv[0] << " --help" << endl;
         return 2;
     }
@@ -752,6 +879,10 @@ int main(int argc, char ** argv) {
     }
     catch (const char * e) {
         cerr << argv[0] << ": " << e << endl;
+        return 1;
+    }
+    catch (...) {
+        cerr << argv[0] << ": unknown exception caught" << endl;
         return 1;
     }
 }
