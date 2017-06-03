@@ -265,11 +265,16 @@ const char * Error::getError() const { return strerror(error); }
 
 class SnifferBase {
 public:
+    SnifferBase(class SnifferController &controller);
     virtual ~SnifferBase() {}
+    
+protected:
+    SnifferController &controller;
 };
 
 /** Object for controlling life cycle of sniffers **/
 class SnifferController {
+    friend class SnifferBase;
 public:
     /**/
     SnifferController(ostream &output) : output(output), alive(true),
@@ -278,8 +283,6 @@ public:
     ~SnifferController();
     /** Returns stream where sniffers should write to **/
     ostream &getStream() const { return output; }
-    /** Called by sniffer to inform that it is created **/
-    void add(SnifferBase * sniffer);
     /** Called by sniffer to inform that it should be destroyed **/
     void mark(SnifferBase * sniffer);
     
@@ -293,7 +296,15 @@ private:
     std::condition_variable gc;
     map<SnifferBase *, bool> sniffers;
     void gcThreadFunc();
+    
+    /** Called by sniffer to inform that it is created **/
+    void add(SnifferBase * sniffer);
 };
+
+SnifferBase::SnifferBase(class SnifferController &controller) :
+        controller(controller) {
+    controller.add(this);
+}
 
 void SnifferController::add(SnifferBase * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
@@ -346,7 +357,7 @@ SnifferController::~SnifferController() {
 class Sniffer : public SnifferBase {
 public:
     /**/
-    explicit Sniffer(const Plugin &plugin);
+    explicit Sniffer(SnifferController &controller, const Plugin &plugin);
     /** Close connection and destroy plugin **/
     virtual ~Sniffer();
     /** Returns unique instance identifier **/
@@ -381,7 +392,7 @@ private:
     bool deleted;
 };
 
-Sniffer::Sniffer(const Plugin &plugin) : deleted(false) {
+Sniffer::Sniffer(SnifferController &controller, const Plugin &plugin) : SnifferBase(controller), deleted(false) {
     static unsigned maxInstanceId=1;
     instanceId=maxInstanceId++;
     protocol=plugin.factory();
@@ -413,7 +424,6 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
 }
 
 void Sniffer::start(SnifferController &controller) {
-    controller.add(this);
     c2sThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), false);
     s2cThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), true);
 }
@@ -472,13 +482,13 @@ private:
 };
 
 StreamSniffer::StreamSniffer(const Plugin &plugin, SnifferController &controller,
-        int client, HostAddress remote) : Sniffer(plugin), client(client), c2s(0) {
+        int client, HostAddress remote) : Sniffer(controller, plugin), client(client), c2s(0) {
     initialize(remote);
     start(controller);
 }
 
 StreamSniffer::StreamSniffer(const Plugin &plugin, SnifferController &controller,
-        int client) : Sniffer(plugin), client(client), c2s(0) {
+        int client) : Sniffer(controller, plugin), client(client), c2s(0) {
     uint8_t version=readByte(client);
     if (version==4) {
         // Process SOCKS4 request
@@ -636,7 +646,7 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
 class DatagramSniffer : public Sniffer {
 public:
     /** Initialize UDP sniffer **/
-    DatagramSniffer(const Plugin &plugin, ostream &log, uint16_t localPort,
+    DatagramSniffer(SnifferController &controller, const Plugin &plugin, ostream &log, uint16_t localPort,
         HostAddress remote);
     
 private:
@@ -646,8 +656,8 @@ private:
     
 };
 
-DatagramSniffer::DatagramSniffer(const Plugin &plugin, ostream &log,
-        uint16_t localPort, HostAddress remote) : Sniffer(plugin) {
+DatagramSniffer::DatagramSniffer(SnifferController &controller, const Plugin &plugin, ostream &log,
+        uint16_t localPort, HostAddress remote) : Sniffer(controller, plugin) {
     log << "Datagram sniffer log" << endl;
     log << "Date: <DATE HERE>" << endl;
     log << "Port: <PORT>" << endl;
