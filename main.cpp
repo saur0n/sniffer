@@ -276,8 +276,6 @@ protected:
     void dump(ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
     void startThreads(ostream &log);
-    /** Called by thread to notify that it is finished **/
-    void notifyDestroyed(bool incoming);
     /** Output beginning of message to cerr and return it **/
     ostream &error() const;
     /**/
@@ -333,8 +331,8 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
 }
 
 void Sniffer::startThreads(ostream &log) {
-    c2sThread=std::thread(&Sniffer::threadFunc, this, std::ref(log), false);
-    s2cThread=std::thread(&Sniffer::threadFunc, this, std::ref(log), true);
+    c2sThread=std::thread(&Sniffer::_threadFunc, this, std::ref(log), false);
+    s2cThread=std::thread(&Sniffer::_threadFunc, this, std::ref(log), true);
 }
 
 ostream &Sniffer::error() const {
@@ -752,6 +750,10 @@ int main(int argc, char ** argv) {
     }
     catch (const char * e) {
         cerr << argv[0] << ": " << e << endl;
+        return 1;
+    }
+    catch (...) {
+        cerr << argv[0] << ": unknown exception caught" << endl;
         return 1;
     }
 }
