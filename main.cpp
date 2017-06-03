@@ -7,8 +7,10 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
+#include <cstdio> //DEBUG
 #include <cstring>
 #include <fstream>
 #include <getopt.h>
@@ -16,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <netdb.h>
+#include <set>
 #include <sstream>
 #include <sys/types.h>
 #include <thread>
@@ -31,6 +34,7 @@ using std::map;
 using std::ostream;
 using std::ostringstream;
 using std::pair;
+using std::set;
 using std::string;
 using std::vector;
 
@@ -261,8 +265,98 @@ const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
 
+class SnifferBase {
+public:
+    virtual ~SnifferBase() {}
+};
+
+/** Object for controlling life cycle of sniffers **/
+class SnifferController {
+public:
+    /**/
+    SnifferController(ostream &output) : output(output), alive(true),
+        gcThread(&SnifferController::gcThreadFunc, this) {}
+    /**/
+    ~SnifferController();
+    /** Returns stream where sniffers should write to **/
+    ostream &getStream() const { return output; }
+    /** Called by sniffer to inform that it is created **/
+    void add(SnifferBase * sniffer);
+    /** Called by sniffer to inform that it should be destroyed **/
+    void mark(SnifferBase * sniffer);
+    
+private:
+    SnifferController(const SnifferController &)=delete;
+    SnifferController &operator =(const SnifferController &)=delete;
+    ostream &output;
+    bool alive;
+    std::mutex gcMutex;
+    std::thread gcThread;
+    std::condition_variable gc;
+    map<SnifferBase *, bool> sniffers;
+    void gcThreadFunc();
+};
+
+void SnifferController::add(SnifferBase * sniffer) {
+    fprintf(stderr, "GC: add (%p)\n", sniffer);
+    std::unique_lock<std::mutex> lock(gcMutex);
+    if (sniffer)
+        sniffers.insert({sniffer, true});
+}
+
+void SnifferController::mark(SnifferBase * sniffer) {
+    fprintf(stderr, "GC: mark (%p)\n", sniffer);
+    std::unique_lock<std::mutex> lock(gcMutex);
+    if (sniffer) {
+        auto i=sniffers.find(sniffer);
+        if (i!=sniffers.end())
+            sniffers[sniffer]=false;
+    }
+    gc.notify_all();
+    fprintf(stderr, "GC: mark (%p) done\n", sniffer);
+}
+
+void SnifferController::gcThreadFunc() {
+    while (alive) {
+        set<SnifferBase *> toBeDeleted;
+        {
+            std::unique_lock<std::mutex> lock(gcMutex);
+            fprintf(stderr, "GC: waiting for signal\n");
+            gc.wait(lock);
+            fprintf(stderr, "GC: starting cycle\n");
+            
+            for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
+                if (!i->second)
+                    toBeDeleted.insert(i->first);
+        }
+        
+        for (auto i=toBeDeleted.begin(); i!=toBeDeleted.end(); ++i) {
+            fprintf(stderr, "GC: deleting sniffer %p\n", *i);
+            try {
+                delete *i;
+            }
+            catch (...) {
+                fprintf(stderr, "GC: delete should not throw!\n");
+            }
+            sniffers.erase(*i);
+        }
+        
+        fprintf(stderr, "GC: end of cycle\n");
+    }
+}
+
+SnifferController::~SnifferController() {
+    alive=false;
+    mark(nullptr);
+    gcThread.join();
+    for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
+        delete i->first;
+}
+
+/******************************************************************************/
+
 /** Abstract protocol sniffer **/
-class Sniffer {
+class Sniffer : public SnifferBase {
 public:
     /**/
     explicit Sniffer(const Plugin &plugin);
@@ -270,15 +364,17 @@ public:
     virtual ~Sniffer();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
+    /** Returns whether this object is marked for deletion **/
+    bool isDeleted() const { return deleted; }
     
 protected:
     /** Dump next packet **/
     void dump(ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
-    void startThreads(ostream &log);
+    void start(SnifferController &controller);
     /** Output beginning of message to cerr and return it **/
     ostream &error() const;
-    /**/
+    /** This function should be overridden by subclasses **/
     virtual void threadFunc(ostream &log, bool incoming)=0;
     
 private:
@@ -286,15 +382,15 @@ private:
     unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
-    /**/
+    /** Mutex for synchronization of access to output log **/
     static std::mutex logMutex;
     /** Thread for interception outgoing data **/
     std::thread c2sThread;
     /** Thread for interception incoming data **/
     std::thread s2cThread;
     /** Private thread function **/
-    void _threadFunc(ostream &log, bool incoming);
-    /** Destruction of this object was started **/
+    void _threadFunc(SnifferController &controller, bool incoming);
+    /** This object is marked for deletion **/
     bool deleted;
 };
 
@@ -330,18 +426,19 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
     log << endl << dumpText << endl;
 }
 
-void Sniffer::startThreads(ostream &log) {
-    c2sThread=std::thread(&Sniffer::_threadFunc, this, std::ref(log), false);
-    s2cThread=std::thread(&Sniffer::_threadFunc, this, std::ref(log), true);
+void Sniffer::start(SnifferController &controller) {
+    controller.add(this);
+    c2sThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), false);
+    s2cThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), true);
 }
 
 ostream &Sniffer::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
 }
 
-void Sniffer::_threadFunc(ostream &log, bool incoming) {
+void Sniffer::_threadFunc(SnifferController &controller, bool incoming) {
     try {
-        threadFunc(log, incoming);
+        threadFunc(controller.getStream(), incoming);
     }
     catch (bool) {
         error() << "disconnected from " << (incoming?"server":"client") << endl;
@@ -353,8 +450,7 @@ void Sniffer::_threadFunc(ostream &log, bool incoming) {
         error() << "unknown exception caught" << endl;
     }
     
-    if (!deleted)
-        delete this;
+    controller.mark(this);
 }
 
 std::mutex Sniffer::logMutex;
@@ -365,10 +461,10 @@ std::mutex Sniffer::logMutex;
 class StreamSniffer : public Sniffer, private Reader {
 public:
     /** Create TCP sniffer **/
-    StreamSniffer(const Plugin &plugin, ostream &log, int client,
+    StreamSniffer(const Plugin &plugin, SnifferController &controller, int client,
         HostAddress remote);
     /** Create TCP sniffer working as SOCKS proxy **/
-    StreamSniffer(const Plugin &plugin, ostream &log, int client);
+    StreamSniffer(const Plugin &plugin, SnifferController &controller, int client);
     /** Close connections **/
     ~StreamSniffer();
     
@@ -389,14 +485,14 @@ private:
     void threadFunc(ostream &log, bool incoming);
 };
 
-StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client,
-        HostAddress remote) : Sniffer(plugin), client(client), c2s(0) {
+StreamSniffer::StreamSniffer(const Plugin &plugin, SnifferController &controller,
+        int client, HostAddress remote) : Sniffer(plugin), client(client), c2s(0) {
     initialize(remote);
-    startThreads(log);
+    start(controller);
 }
 
-StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
-        Sniffer(plugin), client(client), c2s(0) {
+StreamSniffer::StreamSniffer(const Plugin &plugin, SnifferController &controller,
+        int client) : Sniffer(plugin), client(client), c2s(0) {
     uint8_t version=readByte(client);
     if (version==4) {
         // Process SOCKS4 request
@@ -502,7 +598,7 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
         throw Error("SOCKS version mismatch", EPROTO);
     }
     
-    startThreads(log);
+    start(controller);
 }
 
 StreamSniffer::~StreamSniffer() {
@@ -609,12 +705,13 @@ int help(const char * program) {
 
 template <typename ... T>
 int mainLoop(const char * program, const Plugin &plugin, int listener, T ... args) {
+    SnifferController controller(cout);
     while (true) {
         // Accept connection from client
         int client=accept(listener, 0, 0);
         cerr << "New connection from client" << endl; // TODO print ip:port
         try {
-            new StreamSniffer(plugin, cout, client, args...);
+            new StreamSniffer(plugin, controller, client, args...);
         }
         catch (const Error &e) {
             cerr << program << ": " << e << endl;
