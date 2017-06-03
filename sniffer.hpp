@@ -69,7 +69,7 @@ public:
     virtual std::string dump(bool incoming, Reader &input)=0;
 };
 
-#define REGISTER_PROTOCOL(class, name, description, flags, version) \
+#define REGISTER_PROTOCOL(class, name, description, version, flags) \
     Protocol * class##Factory() { \
         return new class(); \
     } \
