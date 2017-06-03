@@ -375,8 +375,6 @@ public:
     virtual ~Sniffer();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
-    /** Returns whether this object is marked for deletion **/
-    bool isDeleted() const { return deleted; }
     
 protected:
     /** Dump next packet **/
@@ -401,11 +399,9 @@ private:
     std::thread s2cThread;
     /** Private thread function **/
     void _threadFunc(SnifferController &controller, bool incoming);
-    /** This object is marked for deletion **/
-    bool deleted;
 };
 
-Sniffer::Sniffer(SnifferController &controller) : SnifferBase(controller), protocol(controller.newProtocol()), deleted(false) {
+Sniffer::Sniffer(SnifferController &controller) : SnifferBase(controller), protocol(controller.newProtocol()) {
     static unsigned maxInstanceId=1;
     instanceId=maxInstanceId++;
     if (!protocol)
