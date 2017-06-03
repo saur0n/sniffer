@@ -276,19 +276,24 @@ protected:
     void dump(ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
     void startThreads(ostream &log);
+    /** Called by thread to notify that it is finished **/
+    void notifyDestroyed(bool incoming);
     /** Output beginning of message to cerr and return it **/
     ostream &error() const;
     /**/
     virtual void threadFunc(ostream &log, bool incoming)=0;
     
 private:
-    int client;
     /** Unique instance ID **/
     unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
     /**/
     static std::mutex logMutex;
+    /** Thread for interception outgoing data **/
+    std::thread c2sThread;
+    /** Thread for interception incoming data **/
+    std::thread s2cThread;
 };
 
 Sniffer::Sniffer(const Plugin &plugin) {
@@ -300,7 +305,12 @@ Sniffer::Sniffer(const Plugin &plugin) {
 }
 
 Sniffer::~Sniffer() {
+    if (c2sThread.joinable())
+        c2sThread.join();
+    if (s2cThread.joinable())
+        s2cThread.join();
     delete protocol;
+    error() << "DESTROYED" << endl;
 }
 
 void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
@@ -319,13 +329,8 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
 }
 
 void Sniffer::startThreads(ostream &log) {
-    // Start client-to-server thread
-    std::thread c2sThread(&Sniffer::threadFunc, this, std::ref(log), false);
-    c2sThread.detach();
-    
-    // Start server-to-client thread
-    std::thread s2cThread(&Sniffer::threadFunc, this, std::ref(log), true);
-    s2cThread.detach();
+    c2sThread=std::thread(&Sniffer::threadFunc, this, std::ref(log), false);
+    s2cThread=std::thread(&Sniffer::threadFunc, this, std::ref(log), true);
 }
 
 ostream &Sniffer::error() const {
@@ -481,8 +486,10 @@ StreamSniffer::StreamSniffer(const Plugin &plugin, ostream &log, int client) :
 }
 
 StreamSniffer::~StreamSniffer() {
-    close(client);
-    close(server);
+    if (client>=0)
+        close(client);
+    if (server>=0)
+        close(server);
 }
 
 void StreamSniffer::read(void * buffer, size_t length) {
@@ -527,6 +534,8 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
     catch (const Error &e) {
         error() << e << endl;
     }
+    
+    delete this;
 }
 
 /******************************************************************************/
