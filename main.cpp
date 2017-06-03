@@ -274,9 +274,12 @@ class SnifferBase {
 public:
     SnifferBase(class SnifferController &controller);
     virtual ~SnifferBase();
+    /** Returns unique instance identifier **/
+    unsigned getInstanceId() const { return instanceId; }
     
 protected:
     SnifferController &controller;
+    unsigned instanceId;
 };
 
 /** Object for controlling life cycle of sniffers **/
@@ -284,9 +287,9 @@ class SnifferController {
     friend class SnifferBase;
 public:
     /**/
-    SnifferController(const Plugin &plugin, ostream &output) : plugin(plugin),
-        output(output), alive(true), gcThread(&SnifferController::gcThreadFunc,
-        this) {}
+    SnifferController(const Plugin &plugin, ostream &output) : 
+        maxInstanceId(0), plugin(plugin), output(output), alive(true),
+        gcThread(&SnifferController::gcThreadFunc, this) {}
     /**/
     ~SnifferController();
     /** Returns stream where sniffers should write to **/
@@ -301,6 +304,7 @@ private:
     
     SnifferController(const SnifferController &)=delete;
     SnifferController &operator =(const SnifferController &)=delete;
+    unsigned maxInstanceId;
     const Plugin &plugin;
     ostream &output;
     bool alive;
@@ -317,7 +321,7 @@ private:
 };
 
 SnifferBase::SnifferBase(class SnifferController &controller) :
-        controller(controller) {
+        controller(controller), instanceId(++controller.maxInstanceId) {
     controller.add(this);
 }
 
@@ -380,8 +384,6 @@ public:
     explicit Sniffer(SnifferController &controller);
     /** Close connection and destroy plugin **/
     virtual ~Sniffer();
-    /** Returns unique instance identifier **/
-    unsigned getInstanceId() const { return instanceId; }
     
 protected:
     /** Dump next packet **/
@@ -394,8 +396,6 @@ protected:
     virtual void threadFunc(ostream &log, bool incoming)=0;
     
 private:
-    /** Unique instance ID **/
-    unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
     /** Mutex for synchronization of access to output log **/
@@ -409,8 +409,6 @@ private:
 };
 
 Sniffer::Sniffer(SnifferController &controller) : SnifferBase(controller), protocol(controller.newProtocol()) {
-    static unsigned maxInstanceId=1;
-    instanceId=maxInstanceId++;
     if (!protocol)
         throw "failed to instantiate protocol plugin";
 }
