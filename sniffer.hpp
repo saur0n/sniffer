@@ -51,44 +51,31 @@ public:
 /** Abstract plugin class (one instance per connection is created) **/
 class Protocol {
 public:
-    /** Options specified by user **/
-    struct Options {
-        /** Sniffer modes **/
-        enum Type {
-            /** Works as fake TCP server **/
-            TCP=0,
-            /** Works as fake UDP server **/
-            UDP=1,
-            /** Works as SOCKS5 server **/
-            SOCKS=2
-        } type;
-        /** Local port sniffer listening at **/
-        uint16_t localPort;
-        /** [not for proxy] Remote host and port **/
-        HostAddress remote;
-        /** Additional data passed by user **/
-        const char * aux;
+    /** Various plugin flags **/
+    enum PluginFlags {
+        /** Can be used on a stream connection **/
+        STREAM=1,
+        /** Can be used on a datagram connection **/
+        DATAGRAM=2
     };
     /** Factory returns new plugin instance **/
     typedef Protocol * (&Factory)();
-    /** Function allows plugin to check/modify parameters passed by user **/
-    typedef bool (&Initializer)(Options &options);
     /** Register plugin in the global registry **/
     static void add(const char * name, const char * description, int version,
-        Factory create, Initializer initializer);
+        unsigned flags, Factory create);
     /**/
     virtual ~Protocol() {}
     /** [abstract] Dump next packet to string **/
     virtual std::string dump(bool incoming, Reader &input)=0;
 };
 
-#define REGISTER_PROTOCOL(class, name, description, version) \
+#define REGISTER_PROTOCOL(class, name, description, flags, version) \
     Protocol * class##Factory() { \
         return new class(); \
     } \
     __attribute__((constructor)) \
     void class##Initialize() { \
-        return Protocol::add(name, description, version, class##Factory, class::init); \
+        return Protocol::add(name, description, version, flags, class##Factory); \
     }
 
 #endif

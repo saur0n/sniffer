@@ -230,8 +230,8 @@ struct Plugin {
     const char * name;
     const char * description;
     int version;
+    unsigned flags;
     Protocol::Factory factory;
-    Protocol::Initializer initializer;
 };
 
 /** Plugin registry **/
@@ -264,8 +264,8 @@ public:
 
 /** Add protocol to the protocol registry **/
 void Protocol::add(const char * name, const char * description, int version,
-        Protocol::Factory factory, Protocol::Initializer initializer) {
-    const Plugin plugin={name, description, version, factory, initializer};
+        unsigned flags, Protocol::Factory factory) {
+    const Plugin plugin={name, description, version, flags, factory};
     Registry::instance().push_back(plugin);
 }
 
@@ -706,6 +706,7 @@ int help(const char * program) {
     cout << "\t--socks-server           *Act as a SOCKS5 proxy" << endl;
     cout << "\t--tcp-server=HOST:PORT   *Route connections to HOST" << endl;
     cout << "\t--udp-server=HOST:PORT   *Route datagrams to HOST" << endl;
+    cout << endl;
     cout << "One and only one option marked with * SHOULD be used." << endl;
     cout << endl;
     cout << "Supported PROTOCOLs:" << endl;
@@ -742,8 +743,8 @@ int mainLoop(const char * program, SnifferController &controller, int listener, 
     return 0;
 }
 
-#define SETTYPE(s) \
-    if (options.type!=UNSPECIFIED) \
+#define SETMODE(s) \
+    if (options.type!=Options::UNSPECIFIED) \
         throw "invalid combination of options"; \
     options.type=s;
 
@@ -783,8 +784,12 @@ int main(int argc, char ** argv) {
             {   0                                                   }
         };
         
-        const Protocol::Options::Type UNSPECIFIED=Protocol::Options::Type(-1);
-        Protocol::Options options={UNSPECIFIED, 0, HostAddress(string(), 0), 0};
+        struct Options {
+            enum Type { UNSPECIFIED, TCP, UDP, SOCKS, UDPLITE } type;
+            HostAddress remote;
+            uint16_t localPort;
+            const char * aux;
+        } options={Options::UNSPECIFIED};
         
         do {
             c=getopt_long(argc, argv, "", OPTIONS, 0);
@@ -803,14 +808,14 @@ int main(int argc, char ** argv) {
                     throw "invalid local --port";
             }
             else if (c=='s') {
-                SETTYPE(Protocol::Options::SOCKS);
+                SETMODE(Options::SOCKS);
             }
             else if (c=='t') {
-                SETTYPE(Protocol::Options::TCP);
+                SETMODE(Options::TCP);
                 options.remote=parseHostAddress(optarg);
             }
             else if (c=='u') {
-                SETTYPE(Protocol::Options::UDP);
+                SETMODE(Options::UDP);
                 options.remote=parseHostAddress(optarg);
             }
             else if (c=='_')
@@ -821,15 +826,11 @@ int main(int argc, char ** argv) {
         
         if (help)
             return ::help(argv[0]);
-        else if (options.type==UNSPECIFIED)
-            throw "missing --tcp-server, --udp-server, --socks-server or --help option";
+        else if (options.type==Options::UNSPECIFIED)
+            throw "mandatory option is missing, see --help";
         else {
             // Find protocol by name
             const Plugin &plugin=Registry::instance()[protocol];
-            
-            // Call plugin initialization routine
-            if (!plugin.initializer(options))
-                throw "transport protocol is not supported by plugin";
             
             // Open log
             std::filebuf buf;
@@ -847,18 +848,24 @@ int main(int argc, char ** argv) {
                 daemon(1, 1);
             }
             
-            if (options.type==Protocol::Options::TCP) {
+            if (options.type==Options::TCP) {
+                if (!(plugin.flags&Protocol::STREAM))
+                    throw "plugin does not support stream connections";
                 if (options.localPort==0)
                     options.localPort=options.remote.second;
                 int listener=listenAt(options.localPort);
                 return mainLoop(argv[0], controller, listener, options.remote);
             }
-            else if (options.type==Protocol::Options::UDP) {
+            else if (options.type==Options::UDP) {
+                if (!(plugin.flags&Protocol::DATAGRAM))
+                    throw "plugin does not support datagram connections";
                 if (options.localPort==0)
                     options.localPort=options.remote.second;
                 throw "UDP is not implemented yet";
             }
-            else if (options.type==Protocol::Options::SOCKS) {
+            else if (options.type==Options::SOCKS) {
+                if (!(plugin.flags&Protocol::STREAM))
+                    throw "plugin does not support stream connections";
                 if (options.localPort==0)
                     throw "--port must be specified";
                 int listener=listenAt(options.localPort);
