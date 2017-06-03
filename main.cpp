@@ -737,6 +737,7 @@ int mainLoop(const char * program, SnifferController &controller, int listener, 
             }
         }
     }
+    close(listener);
     cerr << "Exited from infinite loop." << endl;
     return 0;
 }
