@@ -231,13 +231,20 @@ struct Plugin {
 class Registry : public vector<Plugin> {
 public:
     /** Thrown on attempt to access non-existent plugin **/
-    class PluginNotFoundException {};
+    class PluginNotFoundException {
+    public:
+        PluginNotFoundException(const char * name) : name(name) {}
+        const char * getName() const { return name; }
+        
+    private:
+        const char * name;
+    };
     /** Find plugin by name **/
     const Plugin &operator [](const char * name) {
         for (auto i=begin(); i!=end(); i++)
             if (!strcasecmp(name, i->name))
                 return *i;
-        throw PluginNotFoundException();
+        throw PluginNotFoundException(name);
     }
     /** Global plugin registry **/
     static Registry &instance() {
@@ -739,7 +746,7 @@ int main(int argc, char ** argv) {
         
         // Parse command line arguments
         int help=0, append=0, daemonize=0, c;
-        const char * protocol="raw", * output=0;
+        const char * protocol="raw", * output=nullptr;
         //StringMap options;//TODO
         static struct option OPTIONS[]={
             {   "append",       no_argument,        &append,    1   },
@@ -841,7 +848,7 @@ int main(int argc, char ** argv) {
         }
     }
     catch (const Registry::PluginNotFoundException &e) {
-        cerr << "Protocol with specified name was not found.\n";
+        cerr << "Protocol with name «" << e.getName() << "» was not found.\n";
         cerr << "See " << argv[0] << " --help" << endl;
         return 2;
     }
