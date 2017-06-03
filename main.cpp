@@ -45,6 +45,13 @@ namespace posix {
         return result;
     }
     
+    int accept(int socket, struct sockaddr * addr, socklen_t * len) {
+        int result=::accept(socket, addr, len);
+        if (result<0)
+            Error::raise("accepting a connection");
+        return result;
+    }
+    
     void bind(int socket, const struct sockaddr * addr, socklen_t len) {
         if (::bind(socket, addr, len)<0)
             Error::raise("binding to port");
@@ -710,18 +717,24 @@ int help(const char * program) {
     return 0;
 }
 
+static sig_atomic_t working=1;
+
 template <typename ... T>
 int mainLoop(const char * program, SnifferController &controller, int listener, T ... args) {
-    while (true) {
+    while (working) {
         // Accept connection from client
-        int client=accept(listener, 0, 0);
-        cerr << "New connection from client" << endl; // TODO print ip:port
+        int client=-1;
         try {
+            client=posix::accept(listener, 0, 0);
+            cerr << "New connection from client" << endl; // TODO print ip:port
             new StreamSniffer(controller, client, args...);
         }
         catch (const Error &e) {
-            cerr << program << ": " << e << endl;
-            close(client);
+            if (e.getErrno()!=EINTR) {
+                cerr << program << ": " << e << endl;
+                if (client>=0)
+                    close(client);
+            }
         }
     }
     cerr << "Exited from infinite loop." << endl;
@@ -733,13 +746,23 @@ int mainLoop(const char * program, SnifferController &controller, int listener, 
         throw "invalid combination of options"; \
     options.type=s;
 
+void sighandler(int sigNo) {
+    working=0;
+}
+
 int main(int argc, char ** argv) {
     try {
         // Set default locale
         setlocale(LC_ALL, "");
         
-        // Get rid of fucking SIGPIPE
+        // Set signal behaviour
         signal(SIGPIPE, SIG_IGN);
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler=sighandler;
+        sigaction(SIGHUP, &sa, nullptr);
+        sigaction(SIGINT, &sa, nullptr);
+        sigaction(SIGTERM, &sa, nullptr);
         
         // Parse command line arguments
         int help=0, append=0, daemonize=0, c;
