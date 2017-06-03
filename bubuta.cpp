@@ -102,7 +102,7 @@ void BubutaReader::read(void * buffer, size_t length) {
 class BubutaSniffer : public Protocol {
 public:
     /** Initialize counters **/
-    BubutaSniffer();
+    BubutaSniffer(const std::map<string, string> &options) {}
     /** Dump Bubuta packet **/
     string dump(bool incoming, Reader &input);
     
@@ -111,8 +111,6 @@ private:
     static void dump(const vector<uint8_t> &frame, ostream &stream);
     vector<uint8_t> key;
 };
-
-BubutaSniffer::BubutaSniffer() {}
 
 string BubutaSniffer::dump(bool incoming, Reader &rawInput) {
     extern ostream &operator <<(ostream &, const vector<uint8_t> &);
