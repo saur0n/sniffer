@@ -227,12 +227,42 @@ static string readString(int stream) {
 
 class OptionsImpl : public Options {
 public:
+    OptionsImpl() {}
+    OptionsImpl(const char * optarg);
     const string &get(const char * option) const;
-    void put(const string &key, const string &value) { options[key]=value; }
     
 private:
     map<string, string> options;
 };
+
+OptionsImpl::OptionsImpl(const char * optarg) {
+    string key, value;
+    enum { KEY, VALUE, DONE } state=KEY;
+    for (const char * oc=optarg; *oc; oc++) {
+        if (state==KEY) {
+            if (*oc=='=')
+                state=VALUE;
+            else if (*oc==',')
+                state=DONE;
+            else
+                key.push_back(*oc);
+        }
+        else if (state==VALUE) {
+            if (*oc==',')
+                state=DONE;
+            else
+                value.push_back(*oc);
+        }
+        if (state==DONE) {
+            if (!key.empty())
+                options[key]=value;
+            key=value=string();
+            state=KEY;
+        }
+    }
+    if (!key.empty())
+        options[key]=value;
+}
 
 const string &OptionsImpl::get(const char * option) const {
     static const string EMPTY;
@@ -812,32 +842,7 @@ int main(int argc, char ** argv) {
         do {
             c=getopt_long(argc, argv, "", OPTIONS, 0);
             if (c=='*') {
-                string key, value;
-                enum { KEY, VALUE, DONE } state=KEY;
-                for (const char * oc=optarg; *oc; oc++) {
-                    if (state==KEY) {
-                        if (*oc=='=')
-                            state=VALUE;
-                        else if (*oc==',')
-                            state=DONE;
-                        else
-                            key.push_back(*oc);
-                    }
-                    else if (state==VALUE) {
-                        if (*oc==',')
-                            state=DONE;
-                        else
-                            value.push_back(*oc);
-                    }
-                    if (state==DONE) {
-                        if (!key.empty())
-                            options.aux.put(key, value);
-                        key=value=string();
-                        state=KEY;
-                    }
-                }
-                if (!key.empty())
-                    options.aux.put(key, value);
+                options.aux=OptionsImpl(optarg);
             }
             else if (c=='o') {
                 if (output)
