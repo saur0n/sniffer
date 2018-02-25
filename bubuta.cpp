@@ -2,11 +2,10 @@
  *  Advanced network sniffer
  *  Bubuta mobile chat protocol sniffer
  *  
- *  © 2014—2017, Sauron
+ *  © 2014—2018, Sauron
  ******************************************************************************/ 
 
 #include <arpa/inet.h>
-#include <cstdio> //DEBUUG
 #include <cstring>
 #include <iomanip>
 #include <sstream>
@@ -101,7 +100,7 @@ void BubutaReader::read(void * buffer, size_t length) {
 
 class BubutaSniffer : public Protocol {
 public:
-    /** Initialize counters **/
+    /** Initialize plugin **/
     BubutaSniffer(const std::map<string, string> &options) {}
     /** Dump Bubuta packet **/
     string dump(bool incoming, Reader &input);
