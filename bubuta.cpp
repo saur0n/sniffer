@@ -101,7 +101,7 @@ void BubutaReader::read(void * buffer, size_t length) {
 class BubutaSniffer : public Protocol {
 public:
     /** Initialize plugin **/
-    BubutaSniffer(const std::map<string, string> &options) {}
+    BubutaSniffer(const Options &options) {}
     /** Dump Bubuta packet **/
     string dump(bool incoming, Reader &input);
     

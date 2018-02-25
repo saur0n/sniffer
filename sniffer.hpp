@@ -49,6 +49,13 @@ public:
     }
 };
 
+/** Abstract option provider **/
+class Options {
+public:
+    /** Get an option value **/
+    virtual const std::string &get(const char * option) const=0;
+};
+
 /** Abstract plugin class (one instance per connection is created) **/
 class Protocol {
 public:
@@ -60,7 +67,7 @@ public:
         DATAGRAM=2
     };
     /** Factory returns new plugin instance **/
-    typedef Protocol * (&Factory)(const std::map<std::string, std::string> &options);
+    typedef Protocol * (&Factory)(const Options &options);
     /** Register plugin in the global registry **/
     static void add(const char * name, const char * description, int version,
         unsigned flags, Factory create);
@@ -71,7 +78,7 @@ public:
 };
 
 #define REGISTER_PROTOCOL(class, name, description, version, flags) \
-    Protocol * class##Factory(const std::map<std::string, std::string> &options) { \
+    Protocol * class##Factory(const Options &options) { \
         return new class(options); \
     } \
     __attribute__((constructor)) \

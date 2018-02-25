@@ -21,7 +21,7 @@ extern ostream &operator <<(ostream &stream, const vector<uint8_t> &data);
 class RawSniffer : public Protocol {
 public:
     /** Initialize plugin **/
-    RawSniffer(const std::map<string, string> &options) : lastWriter(LW_NONE) {}
+    RawSniffer(const Options &options) : lastWriter(LW_NONE) {}
     /** Dump Raw packet **/
     string dump(bool incoming, Reader &input);
     

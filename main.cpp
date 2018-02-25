@@ -225,6 +225,23 @@ static string readString(int stream) {
 
 /******************************************************************************/
 
+class OptionsImpl : public Options {
+public:
+    const string &get(const char * option) const;
+    void put(const string &key, const string &value) { options[key]=value; }
+    
+private:
+    map<string, string> options;
+};
+
+const string &OptionsImpl::get(const char * option) const {
+    static const string EMPTY;
+    const auto &iter=options.find(option);
+    return iter==options.end()?EMPTY:iter->second;
+}
+
+/******************************************************************************/
+
 /**/
 struct Plugin {
     const char * name;
@@ -294,7 +311,7 @@ class SnifferController {
     friend class SnifferBase;
 public:
     /**/
-    SnifferController(const Plugin &plugin, const map<string, string> &options,
+    SnifferController(const Plugin &plugin, const OptionsImpl &options,
         ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
         output(output), alive(true), gcThread(&SnifferController::gcThreadFunc,
         this) {}
@@ -314,7 +331,7 @@ private:
     SnifferController &operator =(const SnifferController &)=delete;
     unsigned maxInstanceId;
     const Plugin &plugin;
-    map<string, string> options;
+    OptionsImpl options;
     ostream &output;
     bool alive;
     std::mutex gcMutex;
@@ -789,7 +806,7 @@ int main(int argc, char ** argv) {
             enum Type { UNSPECIFIED, TCP, UDP, SOCKS, UDPLITE } type;
             HostAddress remote;
             uint16_t localPort;
-            map<string, string> aux;
+            OptionsImpl aux;
         } options={Options::UNSPECIFIED};
         
         do {
@@ -814,13 +831,13 @@ int main(int argc, char ** argv) {
                     }
                     if (state==DONE) {
                         if (!key.empty())
-                            options.aux[key]=value;
+                            options.aux.put(key, value);
                         key=value=string();
                         state=KEY;
                     }
                 }
                 if (!key.empty())
-                    options.aux[key]=value;
+                    options.aux.put(key, value);
             }
             else if (c=='o') {
                 if (output)
