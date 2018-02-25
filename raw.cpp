@@ -31,7 +31,6 @@ private:
 };
 
 string RawSniffer::dump(bool incoming, Reader &input) {
-    fprintf(stderr, "Connection: thread %s\n", incoming?"in":"out");
     Writer opposite=incoming?LW_OUTGOING:LW_INCOMING;
     uint8_t byte;
     vector<uint8_t> packet;
