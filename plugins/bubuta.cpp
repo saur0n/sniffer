@@ -11,7 +11,7 @@
 #include <sstream>
 #include <vector>
 #include <zlib.h>
-#include "sniffer.hpp"
+#include "../sniffer.hpp"
 
 #define SHORT_BINARY
 

@@ -9,7 +9,7 @@
 #include <map>
 #include <sstream>
 #include <vector>
-#include "sniffer.hpp"
+#include "../sniffer.hpp"
 
 using std::ostream;
 using std::ostringstream;

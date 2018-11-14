@@ -2,14 +2,21 @@
 #   Advanced network sniffer
 #   Build rules
 #   
-#   © 2013—2017, Sauron
+#   © 2013—2018, Sauron
 ################################################################################
 
 CC=gcc
 CFLAGS=-Os -Wall -std=gnu++11
 LIBRARIES=-lstdc++ -lpthread -lm -lz
-SOURCES=*.cpp
+SOURCES=*.cpp plugins/*.cpp
 OUTPUT=sniffer
 
-all:
+all: $(OUTPUT)
+
+clean:
+	rm -f $(OUTPUT)
+
+$(OUTPUT): $(SOURCES) *.hpp
 	$(CC) -o $(OUTPUT) $(CFLAGS) $(LIBRARIES) $(SOURCES)
+
+.PHONY: all clean
