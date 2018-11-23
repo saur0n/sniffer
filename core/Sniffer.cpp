@@ -2,29 +2,24 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2017, Sauron
+ *  © 2013—2018, Sauron
  ******************************************************************************/
 
 #include <arpa/inet.h>
 #include <cerrno>
-#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
-#include <getopt.h>
 #include <iostream>
 #include <map>
-#include <mutex>
 #include <netdb.h>
 #include <set>
 #include <sstream>
 #include <sys/types.h>
-#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
-#include "../sniffer.hpp"
+#include "Sniffer.hpp"
 
 using std::cerr;
 using std::cout;
@@ -154,17 +149,6 @@ void readFully(int stream, void * _buffer, size_t length) {
     }
 }
 
-/** Parse HOST:PORT string **/
-static HostAddress parseHostAddress(const char * address) {
-    const char * colon=strchr(address, ':');
-    if (!colon)
-        throw "invalid argument format";
-    uint16_t remotePort=atoi(colon+1); // TODO: C++11
-    if (remotePort==0)
-        throw "invalid remote port number";
-    return HostAddress(string(address, colon-address), remotePort);
-}
-
 /** Read one byte from stream **/
 static uint8_t readByte(int stream) {
     uint8_t result;
@@ -225,16 +209,6 @@ static string readString(int stream) {
 
 /******************************************************************************/
 
-class OptionsImpl : public Options {
-public:
-    OptionsImpl() {}
-    OptionsImpl(const char * optarg);
-    const string &get(const char * option) const;
-    
-private:
-    map<string, string> options;
-};
-
 OptionsImpl::OptionsImpl(const char * optarg) {
     string key, value;
     enum { KEY, VALUE, DONE } state=KEY;
@@ -272,44 +246,20 @@ const string &OptionsImpl::get(const char * option) const {
 
 /******************************************************************************/
 
-/**/
-struct Plugin {
-    const char * name;
-    const char * description;
-    int version;
-    unsigned flags;
-    Protocol::Factory factory;
-};
+const Plugin &Registry::operator [](const char * name) {
+    for (auto i=begin(); i!=end(); i++)
+        if (!strcasecmp(name, i->name))
+            return *i;
+    throw PluginNotFoundException(name);
+}
 
-/** Plugin registry **/
-class Registry : public vector<Plugin> {
-public:
-    /** Thrown on attempt to access non-existent plugin **/
-    class PluginNotFoundException {
-    public:
-        PluginNotFoundException(const char * name) : name(name) {}
-        const char * getName() const { return name; }
-        
-    private:
-        const char * name;
-    };
-    /** Find plugin by name **/
-    const Plugin &operator [](const char * name) {
-        for (auto i=begin(); i!=end(); i++)
-            if (!strcasecmp(name, i->name))
-                return *i;
-        throw PluginNotFoundException(name);
-    }
-    /** Global plugin registry **/
-    static Registry &instance() {
-        static Registry * localInstance=0;
-        if (localInstance==0)
-            localInstance=new Registry();
-        return *localInstance;
-    }
-};
+Registry &Registry::instance() {
+    static Registry * localInstance=0;
+    if (localInstance==0)
+        localInstance=new Registry();
+    return *localInstance;
+}
 
-/** Add protocol to the protocol registry **/
 void Protocol::add(const char * name, const char * description, int version,
         unsigned flags, Protocol::Factory factory) {
     const Plugin plugin={name, description, version, flags, factory};
@@ -323,58 +273,6 @@ Error::Error(const char * stage) : stage(stage), error(errno) {}
 const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
-
-class SnifferBase {
-public:
-    SnifferBase(class SnifferController &controller);
-    virtual ~SnifferBase();
-    /** Returns unique instance identifier **/
-    unsigned getInstanceId() const { return instanceId; }
-    
-protected:
-    SnifferController &controller;
-    unsigned instanceId;
-};
-
-/** Object for controlling life cycle of sniffers **/
-class SnifferController {
-    friend class SnifferBase;
-public:
-    /**/
-    SnifferController(const Plugin &plugin, const OptionsImpl &options,
-        ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
-        output(output), alive(true), gcThread(&SnifferController::gcThreadFunc,
-        this) {}
-    /**/
-    ~SnifferController();
-    /** Returns stream where sniffers should write to **/
-    ostream &getStream() const { return output; }
-    /** Create protocol plugin instance **/
-    Protocol * newProtocol() const { return plugin.factory(options); }
-    /** Called by sniffer to inform that it should be destroyed **/
-    void mark(SnifferBase * sniffer);
-    
-private:
-    enum State { Alive, Marked, Deleted };
-    
-    SnifferController(const SnifferController &)=delete;
-    SnifferController &operator =(const SnifferController &)=delete;
-    unsigned maxInstanceId;
-    const Plugin &plugin;
-    OptionsImpl options;
-    ostream &output;
-    bool alive;
-    std::mutex gcMutex;
-    std::thread gcThread;
-    std::condition_variable gc;
-    map<SnifferBase *, State> sniffers;
-    void gcThreadFunc();
-    
-    /** Called by sniffer to inform that it was created **/
-    void add(SnifferBase * sniffer);
-    /** Called by sniffer to inform that it was deleted **/
-    void remove(SnifferBase * sniffer);
-};
 
 SnifferBase::SnifferBase(class SnifferController &controller) :
         controller(controller), instanceId(++controller.maxInstanceId) {
@@ -742,31 +640,6 @@ class ReliableDatagramSniffer : public Sniffer {};
 
 /******************************************************************************/
 
-/** Show help and supported protocols (always returns 0) **/
-int help(const char * program) {
-    cout << "Usage: " << program << " [OPTIONS]" << endl;
-    cout << "\t--append                 Append to FILE" << endl;
-    cout << "\t--daemon                 Daemonize process" << endl;
-    cout << "\t--help                   *Show this help" << endl;
-    cout << "\t--options=OPTIONS        Pass OPTIONS to protocol plugin" << endl;
-    cout << "\t--output=FILE            Output dump to FILE" << endl;
-    cout << "\t--port=PORT              Listen at specified PORT" << endl;
-    cout << "\t--protocol=PROTOCOL      Use specified PROTOCOL" << endl;
-    cout << "\t--socks-server           *Act as a SOCKS5 proxy" << endl;
-    cout << "\t--tcp-server=HOST:PORT   *Route connections to HOST" << endl;
-    cout << "\t--udp-server=HOST:PORT   *Route datagrams to HOST" << endl;
-    cout << endl;
-    cout << "One and only one option marked with * SHOULD be used." << endl;
-    cout << endl;
-    cout << "Supported PROTOCOLs:" << endl;
-    Registry &registry=Registry::instance();
-    for (auto i=registry.begin(); i!=registry.end(); ++i) {
-        cout << "\e[0;34m" << i->name << "\e[0m (v. " << i->version << ")" << endl;
-        cout << "\t" << i->description << endl;
-    }
-    return 0;
-}
-
 static sig_atomic_t working=1;
 
 template <typename ... T>
@@ -792,152 +665,14 @@ int mainLoop(const char * program, SnifferController &controller, int listener, 
     return 0;
 }
 
-#define SETMODE(s) \
-    if (options.type!=Options::UNSPECIFIED) \
-        throw "invalid combination of options"; \
-    options.type=s;
+int mainLoopTcp(const char * program, SnifferController &controller, int listener, HostAddress remote) {
+    return mainLoop(program, controller, listener, remote);
+}
+
+int mainLoopSocks(const char * program, SnifferController &controller, int listener) {
+    return mainLoop(program, controller, listener);
+}
 
 void sighandler(int sigNo) {
     working=0;
 }
-
-int smain(int argc, char ** argv) {
-    try {
-        // Set default locale
-        setlocale(LC_ALL, "");
-        
-        // Set signal behaviour
-        signal(SIGPIPE, SIG_IGN);
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_handler=sighandler;
-        sigaction(SIGHUP, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
-        sigaction(SIGTERM, &sa, nullptr);
-        
-        // Parse command line arguments
-        int help=0, append=0, daemonize=0, c;
-        const char * protocol="raw", * output=nullptr;
-        static struct option OPTIONS[]={
-            {   "append",       no_argument,        &append,    1   },
-            {   "daemon",       no_argument,        &daemonize, 1   },
-            {   "help",         no_argument,        &help,      1   },
-            {   "options",      optional_argument,  0,          '*' },
-            {   "output",       required_argument,  0,          'o' },
-            {   "port",         required_argument,  0,          'p' },
-            {   "protocol",     required_argument,  0,          '_' },
-            {   "socks-server", no_argument,        0,          's' },
-            {   "tcp-server",   required_argument,  0,          't' },
-            {   "udp-server",   required_argument,  0,          'u' },
-            {   0                                                   }
-        };
-        
-        struct Options {
-            enum Type { UNSPECIFIED, TCP, UDP, SOCKS, UDPLITE } type;
-            HostAddress remote;
-            uint16_t localPort;
-            OptionsImpl aux;
-        } options={Options::UNSPECIFIED};
-        
-        do {
-            c=getopt_long(argc, argv, "", OPTIONS, 0);
-            if (c=='*') {
-                options.aux=OptionsImpl(optarg);
-            }
-            else if (c=='o') {
-                if (output)
-                    throw "--output is already set";
-                output=optarg;
-            }
-            else if (c=='p') {
-                options.localPort=atoi(optarg);
-                if (options.localPort==0)
-                    throw "invalid local --port";
-            }
-            else if (c=='s') {
-                SETMODE(Options::SOCKS);
-            }
-            else if (c=='t') {
-                SETMODE(Options::TCP);
-                options.remote=parseHostAddress(optarg);
-            }
-            else if (c=='u') {
-                SETMODE(Options::UDP);
-                options.remote=parseHostAddress(optarg);
-            }
-            else if (c=='_')
-                protocol=optarg;
-            else if (c=='?')
-                return 2;
-        } while (c!=-1);
-        
-        if (help)
-            return ::help(argv[0]);
-        else if (options.type==Options::UNSPECIFIED)
-            throw "mandatory option is missing, see --help";
-        else {
-            // Find protocol by name
-            const Plugin &plugin=Registry::instance()[protocol];
-            
-            // Open log
-            std::filebuf buf;
-            if (output) {
-                using namespace std;
-                buf.open(output, ios::out|(append?ios::app:ios::trunc));
-                cout.rdbuf(&buf);
-            }
-            
-            SnifferController controller(plugin, options.aux, cout);
-            
-            // Daemonize sniffer
-            if (daemonize) {
-                cerr << "Daemonizing sniffer" << endl;
-                daemon(1, 1);
-            }
-            
-            if (options.type==Options::TCP) {
-                if (!(plugin.flags&Protocol::STREAM))
-                    throw "plugin does not support stream connections";
-                if (options.localPort==0)
-                    options.localPort=options.remote.second;
-                int listener=listenAt(options.localPort);
-                return mainLoop(argv[0], controller, listener, options.remote);
-            }
-            else if (options.type==Options::UDP) {
-                if (!(plugin.flags&Protocol::DATAGRAM))
-                    throw "plugin does not support datagram connections";
-                if (options.localPort==0)
-                    options.localPort=options.remote.second;
-                throw "UDP is not implemented yet";
-            }
-            else if (options.type==Options::SOCKS) {
-                if (!(plugin.flags&Protocol::STREAM))
-                    throw "plugin does not support stream connections";
-                if (options.localPort==0)
-                    throw "--port must be specified";
-                int listener=listenAt(options.localPort);
-                return mainLoop(argv[0], controller, listener);
-            }
-            else
-                throw "this cannot happens";
-        }
-    }
-    catch (const Registry::PluginNotFoundException &e) {
-        cerr << "Protocol with name «" << e.getName() << "» was not found.\n";
-        cerr << "See " << argv[0] << " --help" << endl;
-        return 2;
-    }
-    catch (const Error &e) {
-        cerr << argv[0] << ": " << e << endl;
-        return 1;
-    }
-    catch (const char * e) {
-        cerr << argv[0] << ": " << e << endl;
-        return 1;
-    }
-    catch (...) {
-        cerr << argv[0] << ": unknown exception caught" << endl;
-        return 1;
-    }
-}
- 
