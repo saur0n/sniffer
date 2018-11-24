@@ -52,12 +52,12 @@ private:
 };
 
 /** Abstract protocol sniffer **/
-class Sniffer {
+class Connection {
 public:
     /**/
-    explicit Sniffer(class SnifferController &controller);
+    explicit Connection(class SnifferController &controller);
     /** Close connection and destroy plugin **/
-    virtual ~Sniffer();
+    virtual ~Connection();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
     
@@ -88,7 +88,7 @@ private:
 
 /** Object for controlling life cycle of sniffers **/
 class SnifferController {
-    friend class Sniffer;
+    friend class Connection;
 public:
     /**/
     SnifferController(const Plugin &plugin, const OptionsImpl &options,
@@ -102,7 +102,7 @@ public:
     /** Create protocol plugin instance **/
     Protocol * newProtocol() const { return plugin.factory(options); }
     /** Called by sniffer to inform that it should be destroyed **/
-    void mark(Sniffer * sniffer);
+    void mark(Connection * sniffer);
     
 private:
     enum State { Alive, Marked, Deleted };
@@ -117,13 +117,13 @@ private:
     std::mutex gcMutex;
     std::thread gcThread;
     std::condition_variable gc;
-    std::map<Sniffer *, State> sniffers;
+    std::map<Connection *, State> sniffers;
     void gcThreadFunc();
     
     /** Called by sniffer to inform that it was created **/
-    void add(Sniffer * sniffer);
+    void add(Connection * sniffer);
     /** Called by sniffer to inform that it was deleted **/
-    void remove(Sniffer * sniffer);
+    void remove(Connection * sniffer);
 };
 
 #endif

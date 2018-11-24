@@ -274,19 +274,19 @@ const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
 
-void SnifferController::add(Sniffer * sniffer) {
+void SnifferController::add(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.insert({sniffer, Alive});
 }
 
-void SnifferController::remove(Sniffer * sniffer) {
+void SnifferController::remove(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.erase(sniffer);
 }
 
-void SnifferController::mark(Sniffer * sniffer) {
+void SnifferController::mark(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer) {
         auto i=sniffers.find(sniffer);
@@ -298,7 +298,7 @@ void SnifferController::mark(Sniffer * sniffer) {
 
 void SnifferController::gcThreadFunc() {
     while (alive) {
-        set<Sniffer *> toBeDeleted;
+        set<Connection *> toBeDeleted;
         {
             std::unique_lock<std::mutex> lock(gcMutex);
             gc.wait(lock);
@@ -322,7 +322,7 @@ SnifferController::~SnifferController() {
 
 /******************************************************************************/
 
-Sniffer::Sniffer(SnifferController &controller) : controller(controller),
+Connection::Connection(SnifferController &controller) : controller(controller),
         instanceId(++controller.maxInstanceId),
         protocol(controller.newProtocol()) {
     controller.add(this);
@@ -330,7 +330,7 @@ Sniffer::Sniffer(SnifferController &controller) : controller(controller),
         throw "failed to instantiate protocol plugin";
 }
 
-Sniffer::~Sniffer() {
+Connection::~Connection() {
     controller.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
@@ -339,7 +339,7 @@ Sniffer::~Sniffer() {
     delete protocol;
 }
 
-void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
+void Connection::dump(ostream &log, bool incoming, Reader &reader) {
     string dumpText=protocol->dump(incoming, reader);
     std::lock_guard<std::mutex> logLock(logMutex);
     ostringstream header;
@@ -354,16 +354,16 @@ void Sniffer::dump(ostream &log, bool incoming, Reader &reader) {
     log << endl << dumpText << endl;
 }
 
-void Sniffer::start(SnifferController &controller) {
-    c2sThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), false);
-    s2cThread=std::thread(&Sniffer::_threadFunc, this, std::ref(controller), true);
+void Connection::start(SnifferController &controller) {
+    c2sThread=std::thread(&Connection::_threadFunc, this, std::ref(controller), false);
+    s2cThread=std::thread(&Connection::_threadFunc, this, std::ref(controller), true);
 }
 
-ostream &Sniffer::error() const {
+ostream &Connection::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
 }
 
-void Sniffer::_threadFunc(SnifferController &controller, bool incoming) {
+void Connection::_threadFunc(SnifferController &controller, bool incoming) {
     try {
         threadFunc(controller.getStream(), incoming);
     }
@@ -380,12 +380,12 @@ void Sniffer::_threadFunc(SnifferController &controller, bool incoming) {
     controller.mark(this);
 }
 
-std::mutex Sniffer::logMutex;
+std::mutex Connection::logMutex;
 
 /******************************************************************************/
 
 /** Stream protocol sniffer **/
-class StreamSniffer : public Sniffer, private Reader {
+class StreamSniffer : public Connection, private Reader {
 public:
     /** Create TCP sniffer working as a forwarder **/
     StreamSniffer(SnifferController &controller, int client, HostAddress remote);
@@ -412,13 +412,13 @@ private:
 };
 
 StreamSniffer::StreamSniffer(SnifferController &controller, int client,
-        HostAddress remote) : Sniffer(controller), client(client), c2s(0) {
+        HostAddress remote) : Connection(controller), client(client), c2s(0) {
     initialize(remote);
     start(controller);
 }
 
 StreamSniffer::StreamSniffer(SnifferController &controller, int client) :
-        Sniffer(controller), client(client), c2s(0) {
+        Connection(controller), client(client), c2s(0) {
     uint8_t version=readByte(client);
     if (version==4) {
         // Process SOCKS4 request
@@ -573,7 +573,7 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
 /******************************************************************************/
 
 /** Datagram-based protocol (UDP, UDPLITE, DCCP) sniffer **/
-class DatagramSniffer : public Sniffer {
+class DatagramSniffer : public Connection {
 public:
     /** Initialize UDP sniffer **/
     DatagramSniffer(SnifferController &controller, ostream &log, uint16_t localPort,
@@ -587,7 +587,7 @@ private:
 };
 
 DatagramSniffer::DatagramSniffer(SnifferController &controller, ostream &log,
-        uint16_t localPort, HostAddress remote) : Sniffer(controller) {
+        uint16_t localPort, HostAddress remote) : Connection(controller) {
     log << "Datagram sniffer log" << endl;
     log << "Date: <DATE HERE>" << endl;
     log << "Port: <PORT>" << endl;
@@ -597,10 +597,10 @@ DatagramSniffer::DatagramSniffer(SnifferController &controller, ostream &log,
 /******************************************************************************/
 
 /** Sequential packet sniffer (not supported) **/
-class SeqpacketSniffer : public Sniffer {};
+class SeqpacketSniffer : public Connection {};
 
 /** Reliable datagram sniffer (not supported) **/
-class ReliableDatagramSniffer : public Sniffer {};
+class ReliableDatagramSniffer : public Connection {};
 
 /******************************************************************************/
 
