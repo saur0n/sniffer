@@ -55,7 +55,7 @@ private:
 class Connection {
 public:
     /**/
-    explicit Connection(class SnifferController &controller);
+    explicit Connection(class Sniffer &controller);
     /** Close connection and destroy plugin **/
     virtual ~Connection();
     /** Returns unique instance identifier **/
@@ -65,14 +65,14 @@ protected:
     /** Dump next packet **/
     void dump(std::ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
-    void start(SnifferController &controller);
+    void start(Sniffer &controller);
     /** Output beginning of message to cerr and return it **/
     std::ostream &error() const;
     /** This function should be overridden by subclasses **/
     virtual void threadFunc(std::ostream &log, bool incoming)=0;
     
 private:
-    SnifferController &controller;
+    Sniffer &controller;
     unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
@@ -83,32 +83,32 @@ private:
     /** Thread for interception incoming data **/
     std::thread s2cThread;
     /** Private thread function **/
-    void _threadFunc(SnifferController &controller, bool incoming);
+    void _threadFunc(Sniffer &controller, bool incoming);
 };
 
 /** Object for controlling life cycle of sniffers **/
-class SnifferController {
+class Sniffer {
     friend class Connection;
 public:
     /**/
-    SnifferController(const Plugin &plugin, const OptionsImpl &options,
+    Sniffer(const Plugin &plugin, const OptionsImpl &options,
         std::ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
-        output(output), alive(true), gcThread(&SnifferController::gcThreadFunc,
+        output(output), alive(true), gcThread(&Sniffer::gcThreadFunc,
         this) {}
     /**/
-    ~SnifferController();
+    ~Sniffer();
     /** Returns stream where sniffers should write to **/
     std::ostream &getStream() const { return output; }
     /** Create protocol plugin instance **/
     Protocol * newProtocol() const { return plugin.factory(options); }
-    /** Called by sniffer to inform that it should be destroyed **/
-    void mark(Connection * sniffer);
+    /** Called by a connection to inform that it should be destroyed **/
+    void mark(Connection * connection);
     
 private:
     enum State { Alive, Marked, Deleted };
     
-    SnifferController(const SnifferController &)=delete;
-    SnifferController &operator =(const SnifferController &)=delete;
+    Sniffer(const Sniffer &)=delete;
+    Sniffer &operator =(const Sniffer &)=delete;
     unsigned maxInstanceId;
     const Plugin &plugin;
     OptionsImpl options;
@@ -121,9 +121,9 @@ private:
     void gcThreadFunc();
     
     /** Called by sniffer to inform that it was created **/
-    void add(Connection * sniffer);
+    void add(Connection * connection);
     /** Called by sniffer to inform that it was deleted **/
-    void remove(Connection * sniffer);
+    void remove(Connection * connection);
 };
 
 #endif

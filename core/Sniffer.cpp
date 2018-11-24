@@ -274,19 +274,19 @@ const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
 
-void SnifferController::add(Connection * sniffer) {
+void Sniffer::add(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.insert({sniffer, Alive});
 }
 
-void SnifferController::remove(Connection * sniffer) {
+void Sniffer::remove(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.erase(sniffer);
 }
 
-void SnifferController::mark(Connection * sniffer) {
+void Sniffer::mark(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer) {
         auto i=sniffers.find(sniffer);
@@ -296,7 +296,7 @@ void SnifferController::mark(Connection * sniffer) {
     gc.notify_all();
 }
 
-void SnifferController::gcThreadFunc() {
+void Sniffer::gcThreadFunc() {
     while (alive) {
         set<Connection *> toBeDeleted;
         {
@@ -312,7 +312,7 @@ void SnifferController::gcThreadFunc() {
     }
 }
 
-SnifferController::~SnifferController() {
+Sniffer::~Sniffer() {
     alive=false;
     mark(nullptr);
     gcThread.join();
@@ -322,7 +322,7 @@ SnifferController::~SnifferController() {
 
 /******************************************************************************/
 
-Connection::Connection(SnifferController &controller) : controller(controller),
+Connection::Connection(Sniffer &controller) : controller(controller),
         instanceId(++controller.maxInstanceId),
         protocol(controller.newProtocol()) {
     controller.add(this);
@@ -354,7 +354,7 @@ void Connection::dump(ostream &log, bool incoming, Reader &reader) {
     log << endl << dumpText << endl;
 }
 
-void Connection::start(SnifferController &controller) {
+void Connection::start(Sniffer &controller) {
     c2sThread=std::thread(&Connection::_threadFunc, this, std::ref(controller), false);
     s2cThread=std::thread(&Connection::_threadFunc, this, std::ref(controller), true);
 }
@@ -363,7 +363,7 @@ ostream &Connection::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
 }
 
-void Connection::_threadFunc(SnifferController &controller, bool incoming) {
+void Connection::_threadFunc(Sniffer &controller, bool incoming) {
     try {
         threadFunc(controller.getStream(), incoming);
     }
@@ -388,9 +388,9 @@ std::mutex Connection::logMutex;
 class StreamSniffer : public Connection, private Reader {
 public:
     /** Create TCP sniffer working as a forwarder **/
-    StreamSniffer(SnifferController &controller, int client, HostAddress remote);
+    StreamSniffer(Sniffer &controller, int client, HostAddress remote);
     /** Create TCP sniffer working as SOCKS proxy **/
-    StreamSniffer(SnifferController &controller, int client);
+    StreamSniffer(Sniffer &controller, int client);
     /** Close connections **/
     ~StreamSniffer();
     
@@ -411,13 +411,13 @@ private:
     void threadFunc(ostream &log, bool incoming);
 };
 
-StreamSniffer::StreamSniffer(SnifferController &controller, int client,
+StreamSniffer::StreamSniffer(Sniffer &controller, int client,
         HostAddress remote) : Connection(controller), client(client), c2s(0) {
     initialize(remote);
     start(controller);
 }
 
-StreamSniffer::StreamSniffer(SnifferController &controller, int client) :
+StreamSniffer::StreamSniffer(Sniffer &controller, int client) :
         Connection(controller), client(client), c2s(0) {
     uint8_t version=readByte(client);
     if (version==4) {
@@ -573,10 +573,10 @@ void StreamSniffer::threadFunc(ostream &log, bool incoming) {
 /******************************************************************************/
 
 /** Datagram-based protocol (UDP, UDPLITE, DCCP) sniffer **/
-class DatagramSniffer : public Connection {
+class DatagramConnection : public Connection {
 public:
     /** Initialize UDP sniffer **/
-    DatagramSniffer(SnifferController &controller, ostream &log, uint16_t localPort,
+    DatagramConnection(Sniffer &controller, ostream &log, uint16_t localPort,
         HostAddress remote);
     
 private:
@@ -586,8 +586,8 @@ private:
     
 };
 
-DatagramSniffer::DatagramSniffer(SnifferController &controller, ostream &log,
-        uint16_t localPort, HostAddress remote) : Connection(controller) {
+DatagramConnection::DatagramConnection(Sniffer &sniffer, ostream &log,
+        uint16_t localPort, HostAddress remote) : Connection(sniffer) {
     log << "Datagram sniffer log" << endl;
     log << "Date: <DATE HERE>" << endl;
     log << "Port: <PORT>" << endl;
@@ -597,17 +597,17 @@ DatagramSniffer::DatagramSniffer(SnifferController &controller, ostream &log,
 /******************************************************************************/
 
 /** Sequential packet sniffer (not supported) **/
-class SeqpacketSniffer : public Connection {};
+class SeqpacketConnection : public Connection {};
 
 /** Reliable datagram sniffer (not supported) **/
-class ReliableDatagramSniffer : public Connection {};
+class ReliableDatagramConnection : public Connection {};
 
 /******************************************************************************/
 
 static sig_atomic_t working=1;
 
 template <typename ... T>
-int mainLoop(const char * program, SnifferController &controller, int listener, T ... args) {
+int mainLoop(const char * program, Sniffer &controller, int listener, T ... args) {
     while (working) {
         // Accept connection from client
         int client=-1;
@@ -629,11 +629,11 @@ int mainLoop(const char * program, SnifferController &controller, int listener, 
     return 0;
 }
 
-int mainLoopTcp(const char * program, SnifferController &controller, int listener, HostAddress remote) {
+int mainLoopTcp(const char * program, Sniffer &controller, int listener, HostAddress remote) {
     return mainLoop(program, controller, listener, remote);
 }
 
-int mainLoopSocks(const char * program, SnifferController &controller, int listener) {
+int mainLoopSocks(const char * program, Sniffer &controller, int listener) {
     return mainLoop(program, controller, listener);
 }
 

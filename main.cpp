@@ -59,8 +59,8 @@ static HostAddress parseHostAddress(const char * address) {
 }
 
 int listenAt(uint16_t port, int family, bool reuseAddress);
-int mainLoopTcp(const char * program, SnifferController &controller, int listener, HostAddress remote);
-int mainLoopSocks(const char * program, SnifferController &controller, int listener);
+int mainLoopTcp(const char * program, Sniffer &controller, int listener, HostAddress remote);
+int mainLoopSocks(const char * program, Sniffer &controller, int listener);
 ostream &operator <<(ostream &stream, const Error &error);
 
 int main(int argc, char ** argv) {
@@ -151,7 +151,7 @@ int main(int argc, char ** argv) {
                 cout.rdbuf(&buf);
             }
             
-            SnifferController controller(plugin, options.aux, cout);
+            Sniffer controller(plugin, options.aux, cout);
             
             // Daemonize sniffer
             if (daemonize) {
