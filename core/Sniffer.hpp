@@ -64,6 +64,37 @@ protected:
     unsigned instanceId;
 };
 
+/** Abstract protocol sniffer **/
+class Sniffer : public SnifferBase {
+public:
+    /**/
+    explicit Sniffer(SnifferController &controller);
+    /** Close connection and destroy plugin **/
+    virtual ~Sniffer();
+    
+protected:
+    /** Dump next packet **/
+    void dump(std::ostream &log, bool incoming, Reader &reader);
+    /** Start incoming and outgoing threads **/
+    void start(SnifferController &controller);
+    /** Output beginning of message to cerr and return it **/
+    std::ostream &error() const;
+    /** This function should be overridden by subclasses **/
+    virtual void threadFunc(std::ostream &log, bool incoming)=0;
+    
+private:
+    /** Protocol plugin instance **/
+    Protocol * protocol;
+    /** Mutex for synchronization of access to output log **/
+    static std::mutex logMutex;
+    /** Thread for interception outgoing data **/
+    std::thread c2sThread;
+    /** Thread for interception incoming data **/
+    std::thread s2cThread;
+    /** Private thread function **/
+    void _threadFunc(SnifferController &controller, bool incoming);
+};
+
 /** Object for controlling life cycle of sniffers **/
 class SnifferController {
     friend class SnifferBase;

@@ -331,37 +331,6 @@ SnifferController::~SnifferController() {
 
 /******************************************************************************/
 
-/** Abstract protocol sniffer **/
-class Sniffer : public SnifferBase {
-public:
-    /**/
-    explicit Sniffer(SnifferController &controller);
-    /** Close connection and destroy plugin **/
-    virtual ~Sniffer();
-    
-protected:
-    /** Dump next packet **/
-    void dump(ostream &log, bool incoming, Reader &reader);
-    /** Start incoming and outgoing threads **/
-    void start(SnifferController &controller);
-    /** Output beginning of message to cerr and return it **/
-    ostream &error() const;
-    /** This function should be overridden by subclasses **/
-    virtual void threadFunc(ostream &log, bool incoming)=0;
-    
-private:
-    /** Protocol plugin instance **/
-    Protocol * protocol;
-    /** Mutex for synchronization of access to output log **/
-    static std::mutex logMutex;
-    /** Thread for interception outgoing data **/
-    std::thread c2sThread;
-    /** Thread for interception incoming data **/
-    std::thread s2cThread;
-    /** Private thread function **/
-    void _threadFunc(SnifferController &controller, bool incoming);
-};
-
 Sniffer::Sniffer(SnifferController &controller) : SnifferBase(controller), protocol(controller.newProtocol()) {
     if (!protocol)
         throw "failed to instantiate protocol plugin";
@@ -423,7 +392,7 @@ std::mutex Sniffer::logMutex;
 /** Stream protocol sniffer **/
 class StreamSniffer : public Sniffer, private Reader {
 public:
-    /** Create TCP sniffer **/
+    /** Create TCP sniffer working as a forwarder **/
     StreamSniffer(SnifferController &controller, int client, HostAddress remote);
     /** Create TCP sniffer working as SOCKS proxy **/
     StreamSniffer(SnifferController &controller, int client);
