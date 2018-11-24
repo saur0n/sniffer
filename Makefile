@@ -6,7 +6,7 @@
 ################################################################################
 
 CC=gcc
-CFLAGS=-Os -Wall -std=gnu++11
+CFLAGS=-Os -Wall -std=gnu++11 -g
 LIBRARIES=-lstdc++ -lpthread -lm -lz
 SOURCES=*.cpp core/*.cpp plugins/*.cpp
 OUTPUT=sniffer

@@ -15,6 +15,7 @@
 #include <netdb.h>
 #include <set>
 #include <sstream>
+#include <sys/poll.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <utility>
@@ -401,14 +402,22 @@ private:
 private:
     /** Client socket descriptor **/
     int client;
+    string clientBuf;
     /** Server socket descriptor **/
     int server;
+    string serverBuf;
     /** Outgoing thread ID **/
     std::thread::id c2s;
     /** Connect to server **/
     void initialize(HostAddress remote);
     /** Thread function **/
     void threadFunc(ostream &log, bool incoming);
+    /** Polling thread **/
+    std::thread pollThread;
+    /** Polling thread worker **/
+    void pollThreadFunc();
+    std::condition_variable cv;
+    std::mutex cvMutex;
 };
 
 StreamConnection::StreamConnection(Sniffer &controller, int client,
@@ -532,12 +541,17 @@ StreamConnection::~StreamConnection() {
         close(client);
     if (server>=0)
         close(server);
+    if (pollThread.joinable())
+        pollThread.join();
 }
 
-void StreamConnection::read(void * buffer, size_t length) {
-    bool incoming=c2s!=std::this_thread::get_id();
-    readFully(incoming?server:client, buffer, length);
-    posix::write(incoming?client:server, buffer, length);
+void StreamConnection::read(void * destination, size_t length) {
+    string &buffer=c2s!=std::this_thread::get_id()?serverBuf:clientBuf;
+    std::unique_lock<std::mutex> lock(cvMutex);
+    while (buffer.size()<length)
+        cv.wait(lock);
+    memcpy(destination, buffer.data(), length);
+    buffer.erase(0, length);
 }
 
 void StreamConnection::initialize(HostAddress remote) {
@@ -560,6 +574,8 @@ void StreamConnection::initialize(HostAddress remote) {
     if (connect(server, result->ai_addr, result->ai_addrlen)<0)
         Error::raise("connecting to host");
     freeaddrinfo(result);
+    
+    pollThread=std::thread(&StreamConnection::pollThreadFunc, this);
 }
 
 void StreamConnection::threadFunc(ostream &log, bool incoming) {
@@ -568,6 +584,46 @@ void StreamConnection::threadFunc(ostream &log, bool incoming) {
     
     while (true)
         dump(log, incoming, *this);
+}
+
+static void readData(int ifd, int ofd, string &to) {
+    char buffer[1024];
+    auto retval=posix::read(ifd, buffer, sizeof(buffer));
+    to.append(buffer, retval);
+    posix::write(ofd, buffer, retval);
+}
+
+void StreamConnection::pollThreadFunc() {
+    try {
+        error() << "poll thread started\n";
+        pollfd pollfds[2];
+        pollfds[0].fd=client;
+        pollfds[0].events=POLLIN;
+        pollfds[1].fd=server;
+        pollfds[1].events=POLLIN;
+        do {
+            error() << "polling...\n";
+            int retval=poll(pollfds, 2, 5000);
+            if (retval<0)
+                error() << "poll: error\n";
+            else {
+                std::unique_lock<std::mutex> lock(cvMutex);
+                if (pollfds[0].revents&POLLIN) {
+                    readData(client, server, clientBuf);
+                }
+                if (pollfds[1].revents&POLLIN) {
+                    readData(server, client, serverBuf);
+                }
+                cv.notify_all();
+            }
+        } while (1);
+    }
+    catch (const Error &e) {
+        error() << "pollThread: " << e << endl;
+    }
+    catch (...) {
+        error() << "pollThread: unknown error" << endl;
+    }
 }
 
 /******************************************************************************/
