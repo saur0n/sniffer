@@ -385,14 +385,14 @@ std::mutex Connection::logMutex;
 /******************************************************************************/
 
 /** Stream protocol sniffer **/
-class StreamSniffer : public Connection, private Reader {
+class StreamConnection : public Connection, private Reader {
 public:
     /** Create TCP sniffer working as a forwarder **/
-    StreamSniffer(Sniffer &controller, int client, HostAddress remote);
+    StreamConnection(Sniffer &controller, int client, HostAddress remote);
     /** Create TCP sniffer working as SOCKS proxy **/
-    StreamSniffer(Sniffer &controller, int client);
+    StreamConnection(Sniffer &controller, int client);
     /** Close connections **/
-    ~StreamSniffer();
+    ~StreamConnection();
     
 private:
     /** Read portion of raw data **/
@@ -411,13 +411,13 @@ private:
     void threadFunc(ostream &log, bool incoming);
 };
 
-StreamSniffer::StreamSniffer(Sniffer &controller, int client,
+StreamConnection::StreamConnection(Sniffer &controller, int client,
         HostAddress remote) : Connection(controller), client(client), c2s(0) {
     initialize(remote);
     start(controller);
 }
 
-StreamSniffer::StreamSniffer(Sniffer &controller, int client) :
+StreamConnection::StreamConnection(Sniffer &controller, int client) :
         Connection(controller), client(client), c2s(0) {
     uint8_t version=readByte(client);
     if (version==4) {
@@ -527,20 +527,20 @@ StreamSniffer::StreamSniffer(Sniffer &controller, int client) :
     start(controller);
 }
 
-StreamSniffer::~StreamSniffer() {
+StreamConnection::~StreamConnection() {
     if (client>=0)
         close(client);
     if (server>=0)
         close(server);
 }
 
-void StreamSniffer::read(void * buffer, size_t length) {
+void StreamConnection::read(void * buffer, size_t length) {
     bool incoming=c2s!=std::this_thread::get_id();
     readFully(incoming?server:client, buffer, length);
     posix::write(incoming?client:server, buffer, length);
 }
 
-void StreamSniffer::initialize(HostAddress remote) {
+void StreamConnection::initialize(HostAddress remote) {
     // Get server network address
     char service[16];
     sprintf(service, "%d", remote.second);
@@ -562,7 +562,7 @@ void StreamSniffer::initialize(HostAddress remote) {
     freeaddrinfo(result);
 }
 
-void StreamSniffer::threadFunc(ostream &log, bool incoming) {
+void StreamConnection::threadFunc(ostream &log, bool incoming) {
     if (!incoming)
         c2s=std::this_thread::get_id();
     
@@ -614,7 +614,7 @@ int mainLoop(const char * program, Sniffer &controller, int listener, T ... args
         try {
             client=posix::accept(listener, 0, 0);
             cerr << "New connection from client" << endl; // TODO print ip:port
-            new StreamSniffer(controller, client, args...);
+            new StreamConnection(controller, client, args...);
         }
         catch (const Error &e) {
             if (e.getErrno()!=EINTR) {
