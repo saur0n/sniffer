@@ -51,26 +51,15 @@ private:
     std::map<std::string, std::string> options;
 };
 
-/**/
-class SnifferBase {
-public:
-    SnifferBase(class SnifferController &controller);
-    virtual ~SnifferBase();
-    /** Returns unique instance identifier **/
-    unsigned getInstanceId() const { return instanceId; }
-    
-protected:
-    SnifferController &controller;
-    unsigned instanceId;
-};
-
 /** Abstract protocol sniffer **/
-class Sniffer : public SnifferBase {
+class Sniffer {
 public:
     /**/
-    explicit Sniffer(SnifferController &controller);
+    explicit Sniffer(class SnifferController &controller);
     /** Close connection and destroy plugin **/
     virtual ~Sniffer();
+    /** Returns unique instance identifier **/
+    unsigned getInstanceId() const { return instanceId; }
     
 protected:
     /** Dump next packet **/
@@ -83,6 +72,8 @@ protected:
     virtual void threadFunc(std::ostream &log, bool incoming)=0;
     
 private:
+    SnifferController &controller;
+    unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
     /** Mutex for synchronization of access to output log **/
@@ -97,7 +88,7 @@ private:
 
 /** Object for controlling life cycle of sniffers **/
 class SnifferController {
-    friend class SnifferBase;
+    friend class Sniffer;
 public:
     /**/
     SnifferController(const Plugin &plugin, const OptionsImpl &options,
@@ -111,7 +102,7 @@ public:
     /** Create protocol plugin instance **/
     Protocol * newProtocol() const { return plugin.factory(options); }
     /** Called by sniffer to inform that it should be destroyed **/
-    void mark(SnifferBase * sniffer);
+    void mark(Sniffer * sniffer);
     
 private:
     enum State { Alive, Marked, Deleted };
@@ -126,13 +117,13 @@ private:
     std::mutex gcMutex;
     std::thread gcThread;
     std::condition_variable gc;
-    std::map<SnifferBase *, State> sniffers;
+    std::map<Sniffer *, State> sniffers;
     void gcThreadFunc();
     
     /** Called by sniffer to inform that it was created **/
-    void add(SnifferBase * sniffer);
+    void add(Sniffer * sniffer);
     /** Called by sniffer to inform that it was deleted **/
-    void remove(SnifferBase * sniffer);
+    void remove(Sniffer * sniffer);
 };
 
 #endif

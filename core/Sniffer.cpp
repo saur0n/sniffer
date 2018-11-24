@@ -274,28 +274,19 @@ const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
 
-SnifferBase::SnifferBase(class SnifferController &controller) :
-        controller(controller), instanceId(++controller.maxInstanceId) {
-    controller.add(this);
-}
-
-SnifferBase::~SnifferBase() {
-    controller.remove(this);
-}
-
-void SnifferController::add(SnifferBase * sniffer) {
+void SnifferController::add(Sniffer * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.insert({sniffer, Alive});
 }
 
-void SnifferController::remove(SnifferBase * sniffer) {
+void SnifferController::remove(Sniffer * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
         sniffers.erase(sniffer);
 }
 
-void SnifferController::mark(SnifferBase * sniffer) {
+void SnifferController::mark(Sniffer * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer) {
         auto i=sniffers.find(sniffer);
@@ -307,7 +298,7 @@ void SnifferController::mark(SnifferBase * sniffer) {
 
 void SnifferController::gcThreadFunc() {
     while (alive) {
-        set<SnifferBase *> toBeDeleted;
+        set<Sniffer *> toBeDeleted;
         {
             std::unique_lock<std::mutex> lock(gcMutex);
             gc.wait(lock);
@@ -331,12 +322,16 @@ SnifferController::~SnifferController() {
 
 /******************************************************************************/
 
-Sniffer::Sniffer(SnifferController &controller) : SnifferBase(controller), protocol(controller.newProtocol()) {
+Sniffer::Sniffer(SnifferController &controller) : controller(controller),
+        instanceId(++controller.maxInstanceId),
+        protocol(controller.newProtocol()) {
+    controller.add(this);
     if (!protocol)
         throw "failed to instantiate protocol plugin";
 }
 
 Sniffer::~Sniffer() {
+    controller.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
     if (s2cThread.joinable())
