@@ -43,6 +43,8 @@ public:
     StreamConnection(Sniffer &controller, int client);
     /** Close connections **/
     ~StreamConnection();
+    /** Returns the interface for using in the polling function **/
+    Handler &getHandler(unsigned no) { return no?client:server; }
     
 private:
     /** Client to server reader **/
@@ -55,10 +57,6 @@ private:
     int acceptSocksConnection(int client);
     /** Thread function **/
     void threadFunc(std::ostream &log, bool incoming);
-    /** Polling thread **/
-    std::thread pollThread;
-    /** Polling thread worker **/
-    void pollThreadFunc();
 };
 
 #endif

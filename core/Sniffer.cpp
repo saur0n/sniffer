@@ -276,24 +276,39 @@ const char * Error::getError() const { return strerror(error); }
 
 /******************************************************************************/
 
+Sniffer::Sniffer(const Plugin &plugin, const OptionsImpl &options,
+    std::ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
+    output(output), alive(true), gcThread(&Sniffer::gcThreadFunc, this),
+    pollThread(&Sniffer::pollThreadFunc, this) {}
+
+Sniffer::~Sniffer() {
+    alive=false;
+    mark(nullptr);
+    gcThread.join();
+    if (pollThread.joinable())
+        pollThread.join();
+    for (auto i=connections.begin(); i!=connections.end(); i++)
+        delete i->first;
+}
+
 void Sniffer::add(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
-        sniffers.insert({sniffer, Alive});
+        connections.insert({sniffer, Alive});
 }
 
 void Sniffer::remove(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer)
-        sniffers.erase(sniffer);
+        connections.erase(sniffer);
 }
 
 void Sniffer::mark(Connection * sniffer) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (sniffer) {
-        auto i=sniffers.find(sniffer);
-        if (i!=sniffers.end())
-            sniffers[sniffer]=Marked;
+        auto i=connections.find(sniffer);
+        if (i!=connections.end())
+            connections[sniffer]=Marked;
     }
     gc.notify_all();
 }
@@ -304,7 +319,7 @@ void Sniffer::gcThreadFunc() {
         {
             std::unique_lock<std::mutex> lock(gcMutex);
             gc.wait(lock);
-            for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
+            for (auto i=connections.begin(); i!=connections.end(); i++)
                 if (i->second==Marked)
                     toBeDeleted.insert(i->first);
         }
@@ -314,12 +329,43 @@ void Sniffer::gcThreadFunc() {
     }
 }
 
-Sniffer::~Sniffer() {
-    alive=false;
-    mark(nullptr);
-    gcThread.join();
-    for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
-        delete i->first;
+void Sniffer::pollThreadFunc() {
+    try {
+        while (alive) {
+            vector<pollfd> pollfds;
+            vector<std::reference_wrapper<Handler>> handlers;
+            for (auto ii=connections.begin(); ii!=connections.end(); ++ii) {
+                auto i=ii->first; // TODO
+                for (unsigned j=0; j<2; j++) {
+                    Handler &handler=i->getHandler(j);
+                    handlers.emplace_back(handler);
+                    pollfds.push_back(pollfd{handler.getDescriptor(), POLLIN, 0});
+                }
+            }
+            // TODO: do not rebuild database each time
+            
+            int retval=poll(pollfds.data(), pollfds.size(), 5000);
+            if (retval<0)
+                cerr << "poll: error\n";
+            else {
+                for (size_t i=0; i<pollfds.size(); i++) {
+                    Handler &handler=handlers[i];
+                    if (pollfds[i].revents&POLLIN)
+                        handler.notify();
+                    if (pollfds[i].revents&POLLHUP) {
+                        handler.notify();
+                        cerr << "TODO: mark connection as closed" << endl;
+                    }
+                }
+            }
+        }
+    }
+    catch (const Error &e) {
+        cerr << "pollThread: " << e << endl;
+    }
+    catch (...) {
+        cerr << "pollThread: unknown error" << endl;
+    }
 }
 
 /******************************************************************************/
@@ -420,8 +466,6 @@ StreamConnection::StreamConnection(Sniffer &controller, int clientfd) :
 
 StreamConnection::~StreamConnection() {
     alive=false;
-    if (pollThread.joinable())
-        pollThread.join();
 }
 
 int StreamConnection::initialize(HostAddress remote) {
@@ -445,7 +489,6 @@ int StreamConnection::initialize(HostAddress remote) {
         Error::raise("connecting to host");
     freeaddrinfo(ai);
     
-    pollThread=std::thread(&StreamConnection::pollThreadFunc, this);
     return result;
 }
 
@@ -561,45 +604,6 @@ int StreamConnection::acceptSocksConnection(int client) {
 void StreamConnection::threadFunc(ostream &log, bool incoming) {
     while (true)
         dump(log, incoming, incoming?server:client);
-}
-
-void StreamConnection::pollThreadFunc() {
-    struct _Stream {
-        const char * name;
-        StreamReader &reader;
-    } streams[2]={
-        {"client", client},
-        {"server", server}
-    };
-    
-    try {
-        pollfd pollfds[2];
-        for (unsigned i=0; i<2; i++) {
-            pollfds[i].fd=streams[i].reader.getDescriptor();
-            pollfds[i].events=POLLIN;
-        }
-        
-        do {
-            int retval=poll(pollfds, 2, 5000);
-            if (retval<0)
-                error() << "poll: error\n";
-            else {
-                for (unsigned i=0; i<2; i++) {
-                    _Stream &stream=streams[i];
-                    if (pollfds[i].revents&POLLIN)
-                        stream.reader.notify();
-                    if (pollfds[i].revents&POLLHUP)
-                        alive=false;
-                }
-            }
-        } while (alive);
-    }
-    catch (const Error &e) {
-        error() << "pollThread: " << e << endl;
-    }
-    catch (...) {
-        error() << "pollThread: unknown error" << endl;
-    }
 }
 
 /******************************************************************************/

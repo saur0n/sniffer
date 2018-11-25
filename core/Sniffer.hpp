@@ -54,6 +54,7 @@ private:
 /**/
 class Handler {
 public:
+    virtual int getDescriptor() const=0;
     virtual void notify()=0;
 };
 
@@ -68,6 +69,8 @@ public:
     unsigned getInstanceId() const { return instanceId; }
     /**/
     bool isAlive() const { return alive; }
+    /** Returns server-to-client handler **/
+    virtual Handler &getHandler(unsigned no)=0;
     
 protected:
     /** Dump next packet **/
@@ -102,10 +105,7 @@ class Sniffer {
     friend class Connection;
 public:
     /**/
-    Sniffer(const Plugin &plugin, const OptionsImpl &options,
-        std::ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
-        output(output), alive(true), gcThread(&Sniffer::gcThreadFunc,
-        this) {}
+    Sniffer(const Plugin &plugin, const OptionsImpl &options, std::ostream &output);
     /**/
     ~Sniffer();
     /** Returns stream where sniffers should write to **/
@@ -127,14 +127,17 @@ private:
     bool alive;
     std::mutex gcMutex;
     std::thread gcThread;
+    std::thread pollThread;
     std::condition_variable gc;
-    std::map<Connection *, State> sniffers;
+    std::map<Connection *, State> connections;
     void gcThreadFunc();
     
     /** Called by sniffer to inform that it was created **/
     void add(Connection * connection);
     /** Called by sniffer to inform that it was deleted **/
     void remove(Connection * connection);
+    /** Polling thread worker **/
+    void pollThreadFunc();
 };
 
 #endif
