@@ -6,11 +6,7 @@
 class StreamReader : public Reader, public Channel {
 public:
     StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination) {}
-    ~StreamReader() {
-        close(fd);
-        fd=-1;
-        cv.notify_all();
-    }
+    ~StreamReader();
     bool isAlive() const { return fd>=0; }
     int getDescriptor() const { return fd; }
     void notify();

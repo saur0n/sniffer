@@ -279,7 +279,7 @@ const char * Error::getError() const { return strerror(error); }
 /******************************************************************************/
 
 Sniffer::Sniffer(const Plugin &plugin, const OptionsImpl &options,
-    std::ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
+    ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
     output(output), alive(true), pollThread(&Sniffer::pollThreadFunc, this) {}
 
 Sniffer::~Sniffer() {
@@ -297,7 +297,6 @@ void Sniffer::add(Connection * connection) {
 }
 
 void Sniffer::remove(Connection * connection) {
-    std::unique_lock<std::mutex> lock(gcMutex);
     if (connection)
         connections.erase(connection);
 }
@@ -412,6 +411,12 @@ void Connection::_threadFunc(Sniffer &sniffer, bool incoming) {
 std::mutex Connection::logMutex;
 
 /******************************************************************************/
+
+StreamReader::~StreamReader() {
+    close(fd);
+    fd=-1;
+    cv.notify_all();
+}
 
 void StreamReader::notify() {
     if (isAlive()) {
