@@ -308,23 +308,17 @@ void Sniffer::gcThreadFunc() {
                     toBeDeleted.insert(i->first);
         }
         
-        cerr << "gc: deleteing threads" << endl;
         for (auto i=toBeDeleted.begin(); i!=toBeDeleted.end(); ++i)
             delete *i;
-        cerr << "gc: deleteing threads done" << endl;
     }
-    cerr << "gc: stopped" << endl;
 }
 
 Sniffer::~Sniffer() {
-    cerr << "Sniffer::~Sniffer()" << endl;
     alive=false;
     mark(nullptr);
     gcThread.join();
-    cerr << "Sniffer::~Sniffer(): gc joined" << endl;
     for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
         delete i->first;
-    cerr << "Sniffer::~Sniffer() done" << endl;
 }
 
 /******************************************************************************/
@@ -338,14 +332,12 @@ Connection::Connection(Sniffer &controller) : alive(true), controller(controller
 }
 
 Connection::~Connection() {
-    cerr << "Connection::~Connection()" << endl;
     controller.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
     if (s2cThread.joinable())
         s2cThread.join();
     delete protocol;
-    cerr << "Connection::~Connection() done" << endl;
 }
 
 void Connection::dump(ostream &log, bool incoming, Reader &reader) {
@@ -395,23 +387,29 @@ std::mutex Connection::logMutex;
 
 class StreamReader : public Reader, public Handler {
 public:
-    StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination), eof(false) {}
+    StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination) {}
     ~StreamReader() {
         close(fd);
+        fd=-1;
+        cv.notify_all();
     }
     int getDescriptor() const { return fd; }
     void notify() {
-        char tempBuffer[4096];
-        auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
-        if (retval>0) {
-            std::unique_lock<std::mutex> lock(mutex);
-            buffer.append(tempBuffer, retval);
+        if (fd>=0) {
+            char tempBuffer[4096];
+            auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
+            if (retval>0) {
+                std::unique_lock<std::mutex> lock(mutex);
+                buffer.append(tempBuffer, retval);
+            }
+            else {
+                close(fd);
+                fd=-1;
+            }
+            cv.notify_one();
+            if (retval>0)
+                posix::write(destination.getDescriptor(), tempBuffer, retval);
         }
-        else
-            eof=true;
-        cv.notify_one();
-        if (retval>0)
-            posix::write(destination.getDescriptor(), tempBuffer, retval);
     }
     
 private:
@@ -419,18 +417,16 @@ private:
     StreamReader &operator =(const StreamReader &)=delete;
     void read(void * destination, size_t length) {
         std::unique_lock<std::mutex> lock(mutex);
-        while (buffer.size()<length) {
+        while ((fd>=0)&&(buffer.size()<length))
             cv.wait(lock);
-            if (eof)
-                throw true;
-        }
+        if (fd<0)
+            throw true;
         memcpy(destination, buffer.data(), length);
         buffer.erase(0, length);
     }
     
     int fd;
     StreamReader &destination;
-    bool eof;
     string buffer;
     std::mutex mutex;
     std::condition_variable cv;
@@ -476,11 +472,9 @@ StreamConnection::StreamConnection(Sniffer &controller, int clientfd) :
 }
 
 StreamConnection::~StreamConnection() {
-    cerr << "StreamConnection::~StreamConnection()" << endl;
     alive=false;
     if (pollThread.joinable())
         pollThread.join();
-    cerr << "StreamConnection::~StreamConnection() done" << endl;
 }
 
 int StreamConnection::initialize(HostAddress remote) {
