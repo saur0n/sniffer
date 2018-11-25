@@ -51,6 +51,12 @@ private:
     std::map<std::string, std::string> options;
 };
 
+/**/
+class Handler {
+public:
+    virtual void notify()=0;
+};
+
 /** Abstract protocol sniffer **/
 class Connection {
 public:
@@ -60,6 +66,8 @@ public:
     virtual ~Connection();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
+    /**/
+    bool isAlive() const { return alive; }
     
 protected:
     /** Dump next packet **/
@@ -70,6 +78,8 @@ protected:
     std::ostream &error() const;
     /** This function should be overridden by subclasses **/
     virtual void threadFunc(std::ostream &log, bool incoming)=0;
+    /**/
+    bool alive;
     
 private:
     Sniffer &controller;
@@ -82,6 +92,7 @@ private:
     std::thread c2sThread;
     /** Thread for interception incoming data **/
     std::thread s2cThread;
+    
     /** Private thread function **/
     void _threadFunc(Sniffer &controller, bool incoming);
 };

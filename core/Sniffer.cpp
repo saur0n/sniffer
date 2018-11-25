@@ -308,22 +308,28 @@ void Sniffer::gcThreadFunc() {
                     toBeDeleted.insert(i->first);
         }
         
+        cerr << "gc: deleteing threads" << endl;
         for (auto i=toBeDeleted.begin(); i!=toBeDeleted.end(); ++i)
             delete *i;
+        cerr << "gc: deleteing threads done" << endl;
     }
+    cerr << "gc: stopped" << endl;
 }
 
 Sniffer::~Sniffer() {
+    cerr << "Sniffer::~Sniffer()" << endl;
     alive=false;
     mark(nullptr);
     gcThread.join();
+    cerr << "Sniffer::~Sniffer(): gc joined" << endl;
     for (auto i=sniffers.begin(); i!=sniffers.end(); i++)
         delete i->first;
+    cerr << "Sniffer::~Sniffer() done" << endl;
 }
 
 /******************************************************************************/
 
-Connection::Connection(Sniffer &controller) : controller(controller),
+Connection::Connection(Sniffer &controller) : alive(true), controller(controller),
         instanceId(++controller.maxInstanceId),
         protocol(controller.newProtocol()) {
     controller.add(this);
@@ -332,12 +338,14 @@ Connection::Connection(Sniffer &controller) : controller(controller),
 }
 
 Connection::~Connection() {
+    cerr << "Connection::~Connection()" << endl;
     controller.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
     if (s2cThread.joinable())
         s2cThread.join();
     delete protocol;
+    cerr << "Connection::~Connection() done" << endl;
 }
 
 void Connection::dump(ostream &log, bool incoming, Reader &reader) {
@@ -385,8 +393,51 @@ std::mutex Connection::logMutex;
 
 /******************************************************************************/
 
+class StreamReader : public Reader, public Handler {
+public:
+    StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination), eof(false) {}
+    ~StreamReader() {
+        close(fd);
+    }
+    int getDescriptor() const { return fd; }
+    void notify() {
+        char tempBuffer[4096];
+        auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
+        if (retval>0) {
+            std::unique_lock<std::mutex> lock(mutex);
+            buffer.append(tempBuffer, retval);
+        }
+        else
+            eof=true;
+        cv.notify_one();
+        if (retval>0)
+            posix::write(destination.getDescriptor(), tempBuffer, retval);
+    }
+    
+private:
+    StreamReader(const StreamReader &)=delete;
+    StreamReader &operator =(const StreamReader &)=delete;
+    void read(void * destination, size_t length) {
+        std::unique_lock<std::mutex> lock(mutex);
+        while (buffer.size()<length) {
+            cv.wait(lock);
+            if (eof)
+                throw true;
+        }
+        memcpy(destination, buffer.data(), length);
+        buffer.erase(0, length);
+    }
+    
+    int fd;
+    StreamReader &destination;
+    bool eof;
+    string buffer;
+    std::mutex mutex;
+    std::condition_variable cv;
+};
+
 /** Stream protocol sniffer **/
-class StreamConnection : public Connection, private Reader {
+class StreamConnection : public Connection {
 public:
     /** Create TCP sniffer working as a forwarder **/
     StreamConnection(Sniffer &controller, int client, HostAddress remote);
@@ -396,38 +447,68 @@ public:
     ~StreamConnection();
     
 private:
-    /** Read portion of raw data **/
-    virtual void read(void * buffer, size_t length);
-    
-private:
-    /** Client socket descriptor **/
-    int client;
-    string clientBuf;
+    /** Client to server reader **/
+    StreamReader client;
     /** Server socket descriptor **/
-    int server;
-    string serverBuf;
-    /** Outgoing thread ID **/
-    std::thread::id c2s;
+    StreamReader server;
     /** Connect to server **/
-    void initialize(HostAddress remote);
+    int initialize(HostAddress remote);
+    /** Accept SOCKS connection and connect to the target server **/
+    int acceptSocksConnection(int client);
     /** Thread function **/
     void threadFunc(ostream &log, bool incoming);
     /** Polling thread **/
     std::thread pollThread;
     /** Polling thread worker **/
     void pollThreadFunc();
-    std::condition_variable cv;
-    std::mutex cvMutex;
 };
 
-StreamConnection::StreamConnection(Sniffer &controller, int client,
-        HostAddress remote) : Connection(controller), client(client), c2s(0) {
-    initialize(remote);
+StreamConnection::StreamConnection(Sniffer &controller, int clientfd,
+        HostAddress remote) : Connection(controller), client(clientfd, server),
+        server(initialize(remote), client) {
     start(controller);
 }
 
-StreamConnection::StreamConnection(Sniffer &controller, int client) :
-        Connection(controller), client(client), c2s(0) {
+StreamConnection::StreamConnection(Sniffer &controller, int clientfd) :
+        Connection(controller), client(clientfd, server),
+        server(acceptSocksConnection(clientfd), client) {
+    start(controller);
+}
+
+StreamConnection::~StreamConnection() {
+    cerr << "StreamConnection::~StreamConnection()" << endl;
+    alive=false;
+    if (pollThread.joinable())
+        pollThread.join();
+    cerr << "StreamConnection::~StreamConnection() done" << endl;
+}
+
+int StreamConnection::initialize(HostAddress remote) {
+    // Get server network address
+    char service[16];
+    sprintf(service, "%d", remote.second);
+    struct addrinfo hints, * ai;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family=AF_INET; /* IPv4 only */
+    hints.ai_socktype=SOCK_STREAM; /* TCP */
+    int ret=getaddrinfo(remote.first.c_str(), service, &hints, &ai);
+    if (ret!=0)
+        throw Error("connecting", EHOSTUNREACH);
+    
+    // Connect to server
+    error() << "connecting to " << remote.first << ':' << remote.second << "…" << endl;
+    int result=socket(AF_INET, SOCK_STREAM, 0);
+    if (result<0)
+        Error::raise("creating socket");
+    if (connect(result, ai->ai_addr, ai->ai_addrlen)<0)
+        Error::raise("connecting to host");
+    freeaddrinfo(ai);
+    
+    pollThread=std::thread(&StreamConnection::pollThreadFunc, this);
+    return result;
+}
+
+int StreamConnection::acceptSocksConnection(int client) {
     uint8_t version=readByte(client);
     if (version==4) {
         // Process SOCKS4 request
@@ -464,7 +545,7 @@ StreamConnection::StreamConnection(Sniffer &controller, int client) :
         if (rs.status!=0x5a)
             throw Error("SOCKSv4 connection", EPROTO);
         
-        initialize({addressBuf, ntohs(rq.port)});
+        return initialize({addressBuf, ntohs(rq.port)});
     }
     else if (version==5) {
         // Process initial SOCKS5 request
@@ -512,7 +593,7 @@ StreamConnection::StreamConnection(Sniffer &controller, int client) :
         
         if (status==0) {
             // Connect to the target server
-            initialize(remote);
+            int result=initialize(remote);
             
             // Send SOCKS5 connection response
             writeByte(client, 5);
@@ -521,6 +602,8 @@ StreamConnection::StreamConnection(Sniffer &controller, int client) :
             writeByte(client, 1);
             writeLong(client, 0x7f000001);
             writeWord(client, remote.second);
+            // TODO: send NACK in case of bad connection
+            return result;
         }
         else {
             writeByte(client, 5);
@@ -532,91 +615,43 @@ StreamConnection::StreamConnection(Sniffer &controller, int client) :
         error() << "SOCKSv" << (int)version << " is not supported" << endl;
         throw Error("SOCKS version mismatch", EPROTO);
     }
-    
-    start(controller);
-}
-
-StreamConnection::~StreamConnection() {
-    if (client>=0)
-        close(client);
-    if (server>=0)
-        close(server);
-    if (pollThread.joinable())
-        pollThread.join();
-}
-
-void StreamConnection::read(void * destination, size_t length) {
-    string &buffer=c2s!=std::this_thread::get_id()?serverBuf:clientBuf;
-    std::unique_lock<std::mutex> lock(cvMutex);
-    while (buffer.size()<length)
-        cv.wait(lock);
-    memcpy(destination, buffer.data(), length);
-    buffer.erase(0, length);
-}
-
-void StreamConnection::initialize(HostAddress remote) {
-    // Get server network address
-    char service[16];
-    sprintf(service, "%d", remote.second);
-    struct addrinfo hints, * result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family=AF_INET; /* IPv4 only */
-    hints.ai_socktype=SOCK_STREAM; /* TCP */
-    int ret=getaddrinfo(remote.first.c_str(), service, &hints, &result);
-    if (ret!=0)
-        throw Error("connecting", EHOSTUNREACH);
-    
-    // Connect to server
-    error() << "connecting to " << remote.first << ':' << remote.second << "…" << endl;
-    server=socket(AF_INET, SOCK_STREAM, 0);
-    if (server<0)
-        Error::raise("creating socket");
-    if (connect(server, result->ai_addr, result->ai_addrlen)<0)
-        Error::raise("connecting to host");
-    freeaddrinfo(result);
-    
-    pollThread=std::thread(&StreamConnection::pollThreadFunc, this);
 }
 
 void StreamConnection::threadFunc(ostream &log, bool incoming) {
-    if (!incoming)
-        c2s=std::this_thread::get_id();
-    
     while (true)
-        dump(log, incoming, *this);
-}
-
-static void readData(int ifd, int ofd, string &to) {
-    char buffer[1024];
-    auto retval=posix::read(ifd, buffer, sizeof(buffer));
-    to.append(buffer, retval);
-    posix::write(ofd, buffer, retval);
+        dump(log, incoming, incoming?server:client);
 }
 
 void StreamConnection::pollThreadFunc() {
+    struct _Stream {
+        const char * name;
+        StreamReader &reader;
+    } streams[2]={
+        {"client", client},
+        {"server", server}
+    };
+    
     try {
-        error() << "poll thread started\n";
         pollfd pollfds[2];
-        pollfds[0].fd=client;
-        pollfds[0].events=POLLIN;
-        pollfds[1].fd=server;
-        pollfds[1].events=POLLIN;
+        for (unsigned i=0; i<2; i++) {
+            pollfds[i].fd=streams[i].reader.getDescriptor();
+            pollfds[i].events=POLLIN;
+        }
+        
         do {
-            error() << "polling...\n";
             int retval=poll(pollfds, 2, 5000);
             if (retval<0)
                 error() << "poll: error\n";
             else {
-                std::unique_lock<std::mutex> lock(cvMutex);
-                if (pollfds[0].revents&POLLIN) {
-                    readData(client, server, clientBuf);
+                for (unsigned i=0; i<2; i++) {
+                    _Stream &stream=streams[i];
+                    if (pollfds[i].revents&POLLIN)
+                        stream.reader.notify();
+                    if (pollfds[i].revents&POLLHUP)
+                        alive=false;
                 }
-                if (pollfds[1].revents&POLLIN) {
-                    readData(server, client, serverBuf);
-                }
-                cv.notify_all();
             }
-        } while (1);
+        } while (alive);
     }
     catch (const Error &e) {
         error() << "pollThread: " << e << endl;
