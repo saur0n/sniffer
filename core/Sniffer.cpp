@@ -313,15 +313,20 @@ void Sniffer::pollThreadFunc() {
         while (alive) {
             vector<pollfd> pollfds;
             vector<std::reference_wrapper<Channel>> channels;
-            for (auto i=connections.begin(); i!=connections.end(); ++i) {
-                auto &connection=*i;
-                for (unsigned j=0; j<2; j++) {
-                    Channel &channel=connection->getChannel(bool(j));
-                    channels.emplace_back(channel);
-                    pollfds.push_back(pollfd{channel.getDescriptor(), POLLIN, 0});
+            {
+                std::unique_lock<std::mutex> lock(gcMutex);
+                for (auto i=connections.begin(); i!=connections.end(); ++i) {
+                    auto &connection=*i;
+                    for (unsigned j=0; j<2; j++) {
+                        Channel &channel=connection->getChannel(bool(j));
+                        if (channel.isAlive()) {
+                            channels.emplace_back(channel);
+                            pollfds.push_back(pollfd{channel.getDescriptor(), POLLIN, 0});
+                        }
+                    }
                 }
+                // TODO: do not rebuild database each time
             }
-            // TODO: do not rebuild database each time
             
             int retval=posix::poll(pollfds.data(), pollfds.size(), 5000);
             if (retval)
