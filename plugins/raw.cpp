@@ -32,11 +32,10 @@ private:
 
 string RawSniffer::dump(bool incoming, Reader &input) {
     Writer opposite=incoming?LW_OUTGOING:LW_INCOMING;
-    uint8_t byte;
     vector<uint8_t> packet;
     do {
         try {
-            byte=uint8_t(input);
+            uint8_t byte=uint8_t(input);
             if (lastWriter==opposite)
                 packet.swap(buffer);
             buffer.push_back(byte);

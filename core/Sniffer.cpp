@@ -61,6 +61,13 @@ namespace posix {
             Error::raise("listening to port");
     }
     
+    int poll(struct pollfd * fds, nfds_t nfds, int timeout) {
+        int retval=::poll(fds, nfds, timeout);
+        if (retval<0)
+            Error::raise("poll()");
+        return retval;
+    }
+    
     template <class T>
     void setsockopt(int socket, int level, int option, T value) {
         if (::setsockopt(socket, level, option, &value, sizeof(T))<0)
@@ -316,20 +323,11 @@ void Sniffer::pollThreadFunc() {
             }
             // TODO: do not rebuild database each time
             
-            int retval=poll(pollfds.data(), pollfds.size(), 5000);
-            if (retval<0)
-                cerr << "poll: error\n";
-            else {
-                for (size_t i=0; i<pollfds.size(); i++) {
-                    Channel &channel=channels[i];
-                    if (pollfds[i].revents&POLLIN)
-                        channel.notify();
-                    if (pollfds[i].revents&POLLHUP) {
-                        channel.notify();
-                        cerr << "TODO: mark connection as closed" << endl;
-                    }
-                }
-            }
+            int retval=posix::poll(pollfds.data(), pollfds.size(), 5000);
+            if (retval)
+                for (size_t i=0; i<pollfds.size(); i++)
+                    if (pollfds[i].revents)
+                        channels[i].get().notify();
             
             // Delete connections which are not alive
             std::unique_lock<std::mutex> lock(gcMutex);
@@ -423,24 +421,25 @@ void StreamReader::notify() {
         char tempBuffer[BUFFER_SIZE];
         auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
         if (retval>0) {
-            std::unique_lock<std::mutex> lock(mutex);
-            buffer.append(tempBuffer, retval);
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                buffer.append(tempBuffer, retval);
+            }
+            posix::write(destination.getDescriptor(), tempBuffer, retval);
         }
         else {
             close(fd);
             fd=-1;
         }
-        cv.notify_one();
-        if (retval>0)
-            posix::write(destination.getDescriptor(), tempBuffer, retval);
     }
+    cv.notify_all();
 }
 
 void StreamReader::read(void * destination, size_t length) {
     std::unique_lock<std::mutex> lock(mutex);
     while (isAlive()&&(buffer.size()<length))
         cv.wait(lock);
-    if (!isAlive())
+    if (buffer.size()<length)
         throw true;
     memcpy(destination, buffer.data(), length);
     buffer.erase(0, length);
@@ -631,7 +630,7 @@ int mainLoop(const char * program, Sniffer &sniffer, int listener, T ... args) {
         }
     }
     close(listener);
-    cerr << "Exited from infinite loop." << endl;
+    cerr << endl << program << ": shutting down..." << endl;
     return 0;
 }
 
