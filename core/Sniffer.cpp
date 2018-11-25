@@ -280,55 +280,26 @@ const char * Error::getError() const { return strerror(error); }
 
 Sniffer::Sniffer(const Plugin &plugin, const OptionsImpl &options,
     std::ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
-    output(output), alive(true), gcThread(&Sniffer::gcThreadFunc, this),
-    pollThread(&Sniffer::pollThreadFunc, this) {}
+    output(output), alive(true), pollThread(&Sniffer::pollThreadFunc, this) {}
 
 Sniffer::~Sniffer() {
     alive=false;
-    mark(nullptr);
-    gcThread.join();
     if (pollThread.joinable())
         pollThread.join();
     for (auto i=connections.begin(); i!=connections.end(); i++)
-        delete i->first;
+        delete *i;
 }
 
-void Sniffer::add(Connection * sniffer) {
+void Sniffer::add(Connection * connection) {
     std::unique_lock<std::mutex> lock(gcMutex);
-    if (sniffer)
-        connections.insert({sniffer, Alive});
+    if (connection)
+        connections.insert(connection);
 }
 
-void Sniffer::remove(Connection * sniffer) {
+void Sniffer::remove(Connection * connection) {
     std::unique_lock<std::mutex> lock(gcMutex);
-    if (sniffer)
-        connections.erase(sniffer);
-}
-
-void Sniffer::mark(Connection * sniffer) {
-    std::unique_lock<std::mutex> lock(gcMutex);
-    if (sniffer) {
-        auto i=connections.find(sniffer);
-        if (i!=connections.end())
-            connections[sniffer]=Marked;
-    }
-    gc.notify_all();
-}
-
-void Sniffer::gcThreadFunc() {
-    while (alive) {
-        set<Connection *> toBeDeleted;
-        {
-            std::unique_lock<std::mutex> lock(gcMutex);
-            gc.wait(lock);
-            for (auto i=connections.begin(); i!=connections.end(); i++)
-                if (i->second==Marked)
-                    toBeDeleted.insert(i->first);
-        }
-        
-        for (auto i=toBeDeleted.begin(); i!=toBeDeleted.end(); ++i)
-            delete *i;
-    }
+    if (connection)
+        connections.erase(connection);
 }
 
 void Sniffer::pollThreadFunc() {
@@ -336,10 +307,10 @@ void Sniffer::pollThreadFunc() {
         while (alive) {
             vector<pollfd> pollfds;
             vector<std::reference_wrapper<Channel>> channels;
-            for (auto ii=connections.begin(); ii!=connections.end(); ++ii) {
-                auto i=ii->first; // TODO
+            for (auto i=connections.begin(); i!=connections.end(); ++i) {
+                auto &connection=*i;
                 for (unsigned j=0; j<2; j++) {
-                    Channel &channel=i->getChannel(bool(j));
+                    Channel &channel=connection->getChannel(bool(j));
                     channels.emplace_back(channel);
                     pollfds.push_back(pollfd{channel.getDescriptor(), POLLIN, 0});
                 }
@@ -360,6 +331,12 @@ void Sniffer::pollThreadFunc() {
                     }
                 }
             }
+            
+            // Delete connections which are not alive
+            std::unique_lock<std::mutex> lock(gcMutex);
+            for (auto i=connections.begin(); i!=connections.end(); i++)
+                if (!(*i)->isAlive())
+                    delete *i;
         }
     }
     catch (const Error &e) {
@@ -430,8 +407,6 @@ void Connection::_threadFunc(Sniffer &sniffer, bool incoming) {
     catch (...) {
         error() << "unknown exception caught" << endl;
     }
-    
-    sniffer.mark(this);
 }
 
 std::mutex Connection::logMutex;

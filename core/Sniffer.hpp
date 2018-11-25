@@ -10,6 +10,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
 #include "../sniffer.hpp"
@@ -111,26 +112,19 @@ public:
     std::ostream &getStream() const { return output; }
     /** Create protocol plugin instance **/
     Protocol * newProtocol() const { return plugin.factory(options); }
-    /** Called by a connection to inform that it should be destroyed **/
-    void mark(Connection * connection);
     
 private:
-    enum State { Alive, Marked, Deleted };
-    
-    Sniffer(const Sniffer &)=delete;
-    Sniffer &operator =(const Sniffer &)=delete;
     unsigned maxInstanceId;
     const Plugin &plugin;
     OptionsImpl options;
     std::ostream &output;
     bool alive;
     std::mutex gcMutex;
-    std::thread gcThread;
     std::thread pollThread;
-    std::condition_variable gc;
-    std::map<Connection *, State> connections;
-    void gcThreadFunc();
+    std::set<Connection *> connections;
     
+    Sniffer(const Sniffer &)=delete;
+    Sniffer &operator =(const Sniffer &)=delete;
     /** Called by sniffer to inform that it was created **/
     void add(Connection * connection);
     /** Called by sniffer to inform that it was deleted **/
