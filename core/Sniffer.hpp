@@ -52,8 +52,9 @@ private:
 };
 
 /**/
-class Handler {
+class Channel {
 public:
+    virtual bool isAlive() const=0;
     virtual int getDescriptor() const=0;
     virtual void notify()=0;
 };
@@ -67,25 +68,23 @@ public:
     virtual ~Connection();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
-    /**/
-    bool isAlive() const { return alive; }
+    /** Returns whether at least one connection is alive **/
+    bool isAlive();
     /** Returns server-to-client handler **/
-    virtual Handler &getHandler(unsigned no)=0;
+    virtual Channel &getChannel(bool incoming)=0;
     
 protected:
     /** Dump next packet **/
     void dump(std::ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
-    void start(Sniffer &controller);
+    void start(Sniffer &sniffer);
     /** Output beginning of message to cerr and return it **/
     std::ostream &error() const;
     /** This function should be overridden by subclasses **/
     virtual void threadFunc(std::ostream &log, bool incoming)=0;
-    /**/
-    bool alive;
     
 private:
-    Sniffer &controller;
+    Sniffer &sniffer;
     unsigned instanceId;
     /** Protocol plugin instance **/
     Protocol * protocol;
@@ -97,7 +96,7 @@ private:
     std::thread s2cThread;
     
     /** Private thread function **/
-    void _threadFunc(Sniffer &controller, bool incoming);
+    void _threadFunc(Sniffer &sniffer, bool incoming);
 };
 
 /** Object for controlling life cycle of sniffers **/

@@ -34,6 +34,8 @@ using std::set;
 using std::string;
 using std::vector;
 
+#define BUFFER_SIZE 4096
+
 namespace posix {
     int socket(int family, int type, int protocol) {
         int result=::socket(family, type, protocol);
@@ -333,13 +335,13 @@ void Sniffer::pollThreadFunc() {
     try {
         while (alive) {
             vector<pollfd> pollfds;
-            vector<std::reference_wrapper<Handler>> handlers;
+            vector<std::reference_wrapper<Channel>> channels;
             for (auto ii=connections.begin(); ii!=connections.end(); ++ii) {
                 auto i=ii->first; // TODO
                 for (unsigned j=0; j<2; j++) {
-                    Handler &handler=i->getHandler(j);
-                    handlers.emplace_back(handler);
-                    pollfds.push_back(pollfd{handler.getDescriptor(), POLLIN, 0});
+                    Channel &channel=i->getChannel(bool(j));
+                    channels.emplace_back(channel);
+                    pollfds.push_back(pollfd{channel.getDescriptor(), POLLIN, 0});
                 }
             }
             // TODO: do not rebuild database each time
@@ -349,11 +351,11 @@ void Sniffer::pollThreadFunc() {
                 cerr << "poll: error\n";
             else {
                 for (size_t i=0; i<pollfds.size(); i++) {
-                    Handler &handler=handlers[i];
+                    Channel &channel=channels[i];
                     if (pollfds[i].revents&POLLIN)
-                        handler.notify();
+                        channel.notify();
                     if (pollfds[i].revents&POLLHUP) {
-                        handler.notify();
+                        channel.notify();
                         cerr << "TODO: mark connection as closed" << endl;
                     }
                 }
@@ -370,21 +372,25 @@ void Sniffer::pollThreadFunc() {
 
 /******************************************************************************/
 
-Connection::Connection(Sniffer &controller) : alive(true), controller(controller),
-        instanceId(++controller.maxInstanceId),
-        protocol(controller.newProtocol()) {
-    controller.add(this);
+Connection::Connection(Sniffer &sniffer) : sniffer(sniffer),
+        instanceId(++sniffer.maxInstanceId),
+        protocol(sniffer.newProtocol()) {
+    sniffer.add(this);
     if (!protocol)
         throw "failed to instantiate protocol plugin";
 }
 
 Connection::~Connection() {
-    controller.remove(this);
+    sniffer.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
     if (s2cThread.joinable())
         s2cThread.join();
     delete protocol;
+}
+
+bool Connection::isAlive() {
+    return getChannel(true).isAlive()&&getChannel(false).isAlive();
 }
 
 void Connection::dump(ostream &log, bool incoming, Reader &reader) {
@@ -402,18 +408,18 @@ void Connection::dump(ostream &log, bool incoming, Reader &reader) {
     log << endl << dumpText << endl;
 }
 
-void Connection::start(Sniffer &controller) {
-    c2sThread=std::thread(&Connection::_threadFunc, this, std::ref(controller), false);
-    s2cThread=std::thread(&Connection::_threadFunc, this, std::ref(controller), true);
+void Connection::start(Sniffer &sniffer) {
+    c2sThread=std::thread(&Connection::_threadFunc, this, std::ref(sniffer), false);
+    s2cThread=std::thread(&Connection::_threadFunc, this, std::ref(sniffer), true);
 }
 
 ostream &Connection::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
 }
 
-void Connection::_threadFunc(Sniffer &controller, bool incoming) {
+void Connection::_threadFunc(Sniffer &sniffer, bool incoming) {
     try {
-        threadFunc(controller.getStream(), incoming);
+        threadFunc(sniffer.getStream(), incoming);
     }
     catch (bool) {
         error() << "disconnected from " << (incoming?"server":"client") << endl;
@@ -425,7 +431,7 @@ void Connection::_threadFunc(Sniffer &controller, bool incoming) {
         error() << "unknown exception caught" << endl;
     }
     
-    controller.mark(this);
+    sniffer.mark(this);
 }
 
 std::mutex Connection::logMutex;
@@ -433,8 +439,8 @@ std::mutex Connection::logMutex;
 /******************************************************************************/
 
 void StreamReader::notify() {
-    if (fd>=0) {
-        char tempBuffer[4096];
+    if (isAlive()) {
+        char tempBuffer[BUFFER_SIZE];
         auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
         if (retval>0) {
             std::unique_lock<std::mutex> lock(mutex);
@@ -450,23 +456,31 @@ void StreamReader::notify() {
     }
 }
 
+void StreamReader::read(void * destination, size_t length) {
+    std::unique_lock<std::mutex> lock(mutex);
+    while (isAlive()&&(buffer.size()<length))
+        cv.wait(lock);
+    if (!isAlive())
+        throw true;
+    memcpy(destination, buffer.data(), length);
+    buffer.erase(0, length);
+}
+
 /******************************************************************************/
 
-StreamConnection::StreamConnection(Sniffer &controller, int clientfd,
-        HostAddress remote) : Connection(controller), client(clientfd, server),
+StreamConnection::StreamConnection(Sniffer &sniffer, int clientfd,
+        HostAddress remote) : Connection(sniffer), client(clientfd, server),
         server(initialize(remote), client) {
-    start(controller);
+    start(sniffer);
 }
 
-StreamConnection::StreamConnection(Sniffer &controller, int clientfd) :
-        Connection(controller), client(clientfd, server),
+StreamConnection::StreamConnection(Sniffer &sniffer, int clientfd) :
+        Connection(sniffer), client(clientfd, server),
         server(acceptSocksConnection(clientfd), client) {
-    start(controller);
+    start(sniffer);
 }
 
-StreamConnection::~StreamConnection() {
-    alive=false;
-}
+StreamConnection::~StreamConnection() {}
 
 int StreamConnection::initialize(HostAddress remote) {
     // Get server network address
@@ -619,14 +633,14 @@ class ReliableDatagramConnection : public Connection {};
 static sig_atomic_t working=1;
 
 template <typename ... T>
-int mainLoop(const char * program, Sniffer &controller, int listener, T ... args) {
+int mainLoop(const char * program, Sniffer &sniffer, int listener, T ... args) {
     while (working) {
         // Accept connection from client
         int client=-1;
         try {
             client=posix::accept(listener, 0, 0);
             cerr << "New connection from client" << endl; // TODO print ip:port
-            new StreamConnection(controller, client, args...);
+            new StreamConnection(sniffer, client, args...);
         }
         catch (const Error &e) {
             if (e.getErrno()!=EINTR) {
@@ -641,12 +655,12 @@ int mainLoop(const char * program, Sniffer &controller, int listener, T ... args
     return 0;
 }
 
-int mainLoopTcp(const char * program, Sniffer &controller, int listener, HostAddress remote) {
-    return mainLoop(program, controller, listener, remote);
+int mainLoopTcp(const char * program, Sniffer &sniffer, int listener, HostAddress remote) {
+    return mainLoop(program, sniffer, listener, remote);
 }
 
-int mainLoopSocks(const char * program, Sniffer &controller, int listener) {
-    return mainLoop(program, controller, listener);
+int mainLoopSocks(const char * program, Sniffer &sniffer, int listener) {
+    return mainLoop(program, sniffer, listener);
 }
 
 void sighandler(int sigNo) {

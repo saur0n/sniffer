@@ -3,7 +3,7 @@
 
 #include "Sniffer.hpp"
 
-class StreamReader : public Reader, public Handler {
+class StreamReader : public Reader, public Channel {
 public:
     StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination) {}
     ~StreamReader() {
@@ -11,21 +11,14 @@ public:
         fd=-1;
         cv.notify_all();
     }
+    bool isAlive() const { return fd>=0; }
     int getDescriptor() const { return fd; }
     void notify();
     
 private:
     StreamReader(const StreamReader &)=delete;
     StreamReader &operator =(const StreamReader &)=delete;
-    void read(void * destination, size_t length) {
-        std::unique_lock<std::mutex> lock(mutex);
-        while ((fd>=0)&&(buffer.size()<length))
-            cv.wait(lock);
-        if (fd<0)
-            throw true;
-        memcpy(destination, buffer.data(), length);
-        buffer.erase(0, length);
-    }
+    void read(void * destination, size_t length);
     
     int fd;
     StreamReader &destination;
@@ -44,7 +37,7 @@ public:
     /** Close connections **/
     ~StreamConnection();
     /** Returns the interface for using in the polling function **/
-    Handler &getHandler(unsigned no) { return no?client:server; }
+    Channel &getChannel(bool incoming) { return incoming?server:client; }
     
 private:
     /** Client to server reader **/
