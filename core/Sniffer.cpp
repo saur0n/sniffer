@@ -6,6 +6,7 @@
  ******************************************************************************/
 
 #include <arpa/inet.h>
+#include <cassert>
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
@@ -317,13 +318,16 @@ void Sniffer::pollThreadFunc() {
             vector<std::reference_wrapper<Channel>> channels;
             {
                 std::unique_lock<std::mutex> lock(gcMutex);
+                cerr << "nc: " << connections.size() << endl;
                 for (auto i=connections.begin(); i!=connections.end(); ++i) {
                     auto &connection=*i;
-                    for (unsigned j=0; j<2; j++) {
-                        Channel &channel=connection->getChannel(bool(j));
-                        if (channel.isAlive()) {
-                            channels.emplace_back(channel);
-                            pollfds.push_back(pollfd{channel.getDescriptor(), POLLIN, 0});
+                    if (connection) {
+                        for (unsigned j=0; j<2; j++) {
+                            Channel &channel=connection->getChannel(bool(j));
+                            if (channel.isAlive()) {
+                                channels.emplace_back(channel);
+                                pollfds.push_back(pollfd{channel.getDescriptor(), POLLIN, 0});
+                            }
                         }
                     }
                 }
