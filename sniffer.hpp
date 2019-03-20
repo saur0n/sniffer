@@ -28,12 +28,15 @@ public:
     /** Returns error description **/
     const char * getError() const;
     /** Create exception and throw it **/
-    static void raise(const char * stage) { throw Error(stage); }
+    static void raise(const char * stage);
     
 private:
     const char * stage;
     int error;
 };
+
+/** A system call was interrupted **/
+class Interrupt {};
 
 /** Abstract data source **/
 class Reader {

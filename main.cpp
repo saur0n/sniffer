@@ -144,14 +144,15 @@ int main(int argc, char ** argv) {
             const Plugin &plugin=Registry::instance()[protocol];
             
             // Open log
-            std::filebuf buf;
+            std::ostream * outputStream=&cout;
+            std::fstream fstream;
             if (output) {
                 using namespace std;
-                buf.open(output, ios::out|(append?ios::app:ios::trunc));
-                cout.rdbuf(&buf);
+                fstream.open(output, ios::out|(append?ios::app:ios::trunc));
+                outputStream=&fstream;
             }
             
-            Sniffer controller(plugin, options.aux, cout);
+            Sniffer controller(plugin, options.aux, *outputStream);
             
             // Daemonize sniffer
             if (daemonize) {

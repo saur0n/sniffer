@@ -282,6 +282,13 @@ Error::Error(const char * stage) : stage(stage), error(errno) {}
 
 const char * Error::getError() const { return strerror(error); }
 
+void Error::raise(const char * stage) {
+    if (errno==EINTR)
+        throw Interrupt();
+    else
+        throw Error(stage);
+}
+
 /******************************************************************************/
 
 Sniffer::Sniffer(const Plugin &plugin, const OptionsImpl &options,
@@ -294,7 +301,7 @@ Sniffer::~Sniffer() {
         pthread_kill(pollThread.native_handle(), SIGTERM);
         pollThread.join();
     }
-    for (auto i=connections.begin(); i!=connections.end(); i++)
+    for (auto i=connections.begin(); i!=connections.end(); ++i)
         delete *i;
 }
 
@@ -304,10 +311,7 @@ void Sniffer::add(Connection * connection) {
         connections.insert(connection);
 }
 
-void Sniffer::remove(Connection * connection) {
-    if (connection)
-        connections.erase(connection);
-}
+void Sniffer::remove(Connection * connection) {/* TODO remove */}
 
 void Sniffer::pollThreadFunc() {
     try {
@@ -340,10 +344,16 @@ void Sniffer::pollThreadFunc() {
             
             // Delete connections which are not alive
             std::unique_lock<std::mutex> lock(gcMutex);
-            for (auto i=connections.begin(); i!=connections.end(); i++)
-                if (!(*i)->isAlive())
+            for (auto i=connections.begin(); i!=connections.end(); i++) {
+                if (!(*i)->isAlive()) {
                     delete *i;
+                    connections.erase(i);
+                }
+            }
         }
+    }
+    catch (const Interrupt &e) {
+        cerr << "pollThread: program was terminated" << endl;
     }
     catch (const Error &e) {
         cerr << "pollThread: " << e << endl;
@@ -364,7 +374,7 @@ Connection::Connection(Sniffer &sniffer) : sniffer(sniffer),
 }
 
 Connection::~Connection() {
-    fprintf(stderr, "DELETING CONNECTION %p\n", this);
+    fprintf(stderr, "DESTROYING CONNECTION %p\n", this);
     sniffer.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
@@ -574,6 +584,9 @@ int mainLoop(const char * program, Sniffer &sniffer, int listener, T ... args) {
             cerr << "New connection from client" << endl; // TODO print ip:port
             new StreamConnection(sniffer, client, args...);
         }
+        catch (const Interrupt &e) {
+            cerr << endl << program << ": shutting down..." << endl;
+        }
         catch (const Error &e) {
             if (e.getErrno()!=EINTR) {
                 cerr << program << ": " << e << endl;
@@ -583,7 +596,6 @@ int mainLoop(const char * program, Sniffer &sniffer, int listener, T ... args) {
         }
     }
     close(listener);
-    cerr << endl << program << ": shutting down..." << endl;
     return 0;
 }
 
