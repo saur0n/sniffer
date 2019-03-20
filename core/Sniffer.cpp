@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2018, Sauron
+ *  © 2013—2019, Sauron
  ******************************************************************************/
 
 #include <arpa/inet.h>
@@ -605,9 +605,6 @@ void StreamConnection::threadFunc(ostream &log, bool incoming) {
 }
 
 /******************************************************************************/
-
-/** Sequential packet sniffer (not supported) **/
-class SeqpacketConnection : public Connection {};
 
 /** Reliable datagram sniffer (not supported) **/
 class ReliableDatagramConnection : public Connection {};
