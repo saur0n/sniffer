@@ -5,7 +5,7 @@
 
 class StreamReader : public Reader, public Channel {
 public:
-    StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination) {}
+    StreamReader(int fd, StreamReader &destination);
     ~StreamReader();
     bool isAlive() const { return fd>=0; }
     int getDescriptor() const { return fd; }

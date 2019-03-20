@@ -35,8 +35,6 @@ using std::set;
 using std::string;
 using std::vector;
 
-#define BUFFER_SIZE 4096
-
 namespace posix {
     int socket(int family, int type, int protocol) {
         int result=::socket(family, type, protocol);
@@ -90,7 +88,7 @@ namespace posix {
     }
 }
 
-/** Listen at specified port at all local interfaces **/
+/** Listen at the specified port at all local interfaces **/
 int listenAt(uint16_t port, int family=AF_INET, bool reuseAddress=true) {
     int listener=posix::socket(family, SOCK_STREAM, 0);
     struct sockaddr_in endpoint;
@@ -104,7 +102,7 @@ int listenAt(uint16_t port, int family=AF_INET, bool reuseAddress=true) {
     return listener;
 }
 
-/** Bind to specified port **/
+/** Bind to the specified port **/
 int bindTo(uint16_t port, int family=AF_INET, bool reuseAddress=true) {
     int listener=posix::socket(family, SOCK_DGRAM, 0);
     struct sockaddr_in endpoint;
@@ -366,6 +364,7 @@ Connection::Connection(Sniffer &sniffer) : sniffer(sniffer),
 }
 
 Connection::~Connection() {
+    fprintf(stderr, "DELETING CONNECTION %p\n", this);
     sniffer.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
@@ -421,56 +420,7 @@ std::mutex Connection::logMutex;
 
 /******************************************************************************/
 
-StreamReader::~StreamReader() {
-    close(fd);
-    fd=-1;
-    cv.notify_all();
-}
-
-void StreamReader::notify() {
-    if (isAlive()) {
-        char tempBuffer[BUFFER_SIZE];
-        auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
-        if (retval>0) {
-            {
-                std::unique_lock<std::mutex> lock(mutex);
-                buffer.append(tempBuffer, retval);
-            }
-            posix::write(destination.getDescriptor(), tempBuffer, retval);
-        }
-        else {
-            close(fd);
-            fd=-1;
-        }
-    }
-    cv.notify_all();
-}
-
-void StreamReader::read(void * destination, size_t length) {
-    std::unique_lock<std::mutex> lock(mutex);
-    while (isAlive()&&(buffer.size()<length))
-        cv.wait(lock);
-    if (buffer.size()<length)
-        throw true;
-    memcpy(destination, buffer.data(), length);
-    buffer.erase(0, length);
-}
-
 /******************************************************************************/
-
-StreamConnection::StreamConnection(Sniffer &sniffer, int clientfd,
-        HostAddress remote) : Connection(sniffer), client(clientfd, server),
-        server(initialize(remote), client) {
-    start(sniffer);
-}
-
-StreamConnection::StreamConnection(Sniffer &sniffer, int clientfd) :
-        Connection(sniffer), client(clientfd, server),
-        server(acceptSocksConnection(clientfd), client) {
-    start(sniffer);
-}
-
-StreamConnection::~StreamConnection() {}
 
 int StreamConnection::initialize(HostAddress remote) {
     // Get server network address
