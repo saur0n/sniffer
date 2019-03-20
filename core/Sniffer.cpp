@@ -291,8 +291,10 @@ Sniffer::Sniffer(const Plugin &plugin, const OptionsImpl &options,
 
 Sniffer::~Sniffer() {
     alive=false;
-    if (pollThread.joinable())
+    if (pollThread.joinable()) {
+        pthread_kill(pollThread.native_handle(), SIGTERM);
         pollThread.join();
+    }
     for (auto i=connections.begin(); i!=connections.end(); i++)
         delete *i;
 }
