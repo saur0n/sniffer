@@ -606,11 +606,6 @@ void StreamConnection::threadFunc(ostream &log, bool incoming) {
 
 /******************************************************************************/
 
-/** Reliable datagram sniffer (not supported) **/
-class ReliableDatagramConnection : public Connection {};
-
-/******************************************************************************/
-
 static sig_atomic_t working=1;
 
 template <typename ... T>
