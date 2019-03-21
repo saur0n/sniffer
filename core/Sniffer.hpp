@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2018, Sauron
+ *  © 2013—2019, Sauron
  ******************************************************************************/
 
 #ifndef __CORE_SNIFFER_HPP
@@ -121,14 +121,12 @@ private:
     bool alive;
     std::mutex gcMutex;
     std::thread pollThread;
-    std::set<Connection *> connections;
+    std::vector<Connection *> connections;
     
     Sniffer(const Sniffer &)=delete;
     Sniffer &operator =(const Sniffer &)=delete;
     /** Called by sniffer to inform that it was created **/
     void add(Connection * connection);
-    /** Called by sniffer to inform that it was deleted **/
-    void remove(Connection * connection);
     /** Polling thread worker **/
     void pollThreadFunc();
 };

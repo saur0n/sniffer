@@ -307,11 +307,16 @@ Sniffer::~Sniffer() {
 
 void Sniffer::add(Connection * connection) {
     std::unique_lock<std::mutex> lock(gcMutex);
-    if (connection)
-        connections.insert(connection);
+    if (connection) {
+        for (auto i=connections.begin(); i!=connections.end(); ++i) {
+            if (*i==nullptr) {
+                *i=connection;
+                return;
+            }
+        }
+        connections.push_back(connection);
+    }
 }
-
-void Sniffer::remove(Connection * connection) {/* TODO remove */}
 
 void Sniffer::pollThreadFunc() {
     try {
@@ -320,9 +325,8 @@ void Sniffer::pollThreadFunc() {
             vector<std::reference_wrapper<Channel>> channels;
             {
                 std::unique_lock<std::mutex> lock(gcMutex);
-                cerr << "nc: " << connections.size() << endl;
                 for (auto i=connections.begin(); i!=connections.end(); ++i) {
-                    auto &connection=*i;
+                    auto connection=*i;
                     if (connection) {
                         for (unsigned j=0; j<2; j++) {
                             Channel &channel=connection->getChannel(bool(j));
@@ -344,10 +348,11 @@ void Sniffer::pollThreadFunc() {
             
             // Delete connections which are not alive
             std::unique_lock<std::mutex> lock(gcMutex);
-            for (auto i=connections.begin(); i!=connections.end(); i++) {
-                if (!(*i)->isAlive()) {
-                    delete *i;
-                    connections.erase(i);
+            for (auto i=connections.begin(); i!=connections.end(); ++i) {
+                Connection * connection=*i;
+                if (connection&&!connection->isAlive()) {
+                    delete connection;
+                    *i=nullptr;
                 }
             }
         }
@@ -374,8 +379,6 @@ Connection::Connection(Sniffer &sniffer) : sniffer(sniffer),
 }
 
 Connection::~Connection() {
-    fprintf(stderr, "DESTROYING CONNECTION %p\n", this);
-    sniffer.remove(this);
     if (c2sThread.joinable())
         c2sThread.join();
     if (s2cThread.joinable())
@@ -427,8 +430,6 @@ void Connection::_threadFunc(Sniffer &sniffer, bool incoming) {
 }
 
 std::mutex Connection::logMutex;
-
-/******************************************************************************/
 
 /******************************************************************************/
 
