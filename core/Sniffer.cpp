@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -292,8 +293,8 @@ void Error::raise(const char * stage) {
 /******************************************************************************/
 
 Sniffer::Sniffer(const Plugin &plugin, const OptionsImpl &options,
-    ostream &output) : maxInstanceId(0), plugin(plugin), options(options),
-    output(output), alive(true), pollThread(&Sniffer::pollThreadFunc, this) {}
+    ostream &output) : plugin(plugin), options(options), output(output),
+    alive(true), pollThread(&Sniffer::pollThreadFunc, this) {}
 
 Sniffer::~Sniffer() {
     alive=false;
@@ -301,15 +302,13 @@ Sniffer::~Sniffer() {
         pthread_kill(pollThread.native_handle(), SIGTERM);
         pollThread.join();
     }
-    for (auto i=connections.begin(); i!=connections.end(); ++i)
-        delete *i;
 }
 
 void Sniffer::add(Connection * connection) {
     std::unique_lock<std::mutex> lock(gcMutex);
     if (connection) {
         for (auto i=connections.begin(); i!=connections.end(); ++i) {
-            if (*i==nullptr) {
+            if (!*i) {
                 *i=connection;
                 return;
             }
@@ -325,8 +324,8 @@ void Sniffer::pollThreadFunc() {
             vector<std::reference_wrapper<Channel>> channels;
             {
                 std::unique_lock<std::mutex> lock(gcMutex);
-                for (auto i=connections.begin(); i!=connections.end(); ++i) {
-                    auto connection=*i;
+                for (size_t i=0; i<connections.size(); i++) {
+                    ConnectionPtr connection=connections[i];
                     if (connection) {
                         for (unsigned j=0; j<2; j++) {
                             Channel &channel=connection->getChannel(bool(j));
@@ -349,7 +348,7 @@ void Sniffer::pollThreadFunc() {
             // Delete connections which are not alive
             std::unique_lock<std::mutex> lock(gcMutex);
             for (auto i=connections.begin(); i!=connections.end(); ++i) {
-                Connection * connection=*i;
+                ConnectionPtr connection=*i;
                 if (connection&&!connection->isAlive()) {
                     delete connection;
                     *i=nullptr;
@@ -371,9 +370,8 @@ void Sniffer::pollThreadFunc() {
 /******************************************************************************/
 
 Connection::Connection(Sniffer &sniffer) : sniffer(sniffer),
-        instanceId(++sniffer.maxInstanceId),
+        instanceId(++maxInstanceId),
         protocol(sniffer.newProtocol()) {
-    sniffer.add(this);
     if (!protocol)
         throw "failed to instantiate protocol plugin";
 }
@@ -387,7 +385,10 @@ Connection::~Connection() {
 }
 
 bool Connection::isAlive() {
-    return getChannel(true).isAlive()&&getChannel(false).isAlive();
+    Channel &incoming=getChannel(true), &outgoing=getChannel(false);
+    bool incomingAlive=incoming.isAlive(), outgoingAlive=outgoing.isAlive();
+    return incomingAlive&&outgoingAlive;
+    //return getChannel(true).isAlive()&&getChannel(false).isAlive();
 }
 
 void Connection::dump(ostream &log, bool incoming, Reader &reader) {
@@ -413,6 +414,8 @@ void Connection::start(Sniffer &sniffer) {
 ostream &Connection::error() const {
     return cerr << "Connection #" << getInstanceId() << ": ";
 }
+
+unsigned Connection::maxInstanceId=0;
 
 void Connection::_threadFunc(Sniffer &sniffer, bool incoming) {
     try {
@@ -583,7 +586,7 @@ int mainLoop(const char * program, Sniffer &sniffer, int listener, T ... args) {
         try {
             client=posix::accept(listener, 0, 0);
             cerr << "New connection from client" << endl; // TODO print ip:port
-            new StreamConnection(sniffer, client, args...);
+            sniffer.add<StreamConnection>(client, args...);
         }
         catch (const Interrupt &e) {
             cerr << endl << program << ": shutting down..." << endl;

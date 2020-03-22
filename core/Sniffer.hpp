@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2019, Sauron
+ *  © 2013—2020, Sauron
  ******************************************************************************/
 
 #ifndef __CORE_SNIFFER_HPP
@@ -63,9 +63,9 @@ public:
 /** Abstract protocol sniffer **/
 class Connection {
 public:
-    /**/
+    /** Create a sniffer connection and protocol handler instance **/
     explicit Connection(class Sniffer &controller);
-    /** Close connection and destroy plugin **/
+    /** Close connection and destroy protocol handler instance **/
     virtual ~Connection();
     /** Returns unique instance identifier **/
     unsigned getInstanceId() const { return instanceId; }
@@ -86,8 +86,9 @@ protected:
     
 private:
     Sniffer &sniffer;
+    static unsigned maxInstanceId;
     unsigned instanceId;
-    /** Protocol plugin instance **/
+    /** Protocol handler instance **/
     Protocol * protocol;
     /** Mutex for synchronization of access to output log **/
     static std::mutex logMutex;
@@ -100,9 +101,8 @@ private:
     void _threadFunc(Sniffer &sniffer, bool incoming);
 };
 
-/** Object for controlling life cycle of sniffers **/
+/** Object for controlling life cycle of sniffed connections **/
 class Sniffer {
-    friend class Connection;
 public:
     /**/
     Sniffer(const Plugin &plugin, const OptionsImpl &options, std::ostream &output);
@@ -112,16 +112,22 @@ public:
     std::ostream &getStream() const { return output; }
     /** Create protocol plugin instance **/
     Protocol * newProtocol() const { return plugin.factory(options); }
+    /** Add a new connection **/
+    template <class T, class... A>
+    void add(A... args) {
+        Connection * connection=new T(*this, args...);
+        add(connection);
+    }
     
 private:
-    unsigned maxInstanceId;
+    typedef Connection * ConnectionPtr;
     const Plugin &plugin;
     OptionsImpl options;
     std::ostream &output;
     bool alive;
     std::mutex gcMutex;
     std::thread pollThread;
-    std::vector<Connection *> connections;
+    std::vector<ConnectionPtr> connections;
     
     Sniffer(const Sniffer &)=delete;
     Sniffer &operator =(const Sniffer &)=delete;

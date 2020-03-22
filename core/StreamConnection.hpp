@@ -5,6 +5,7 @@
 
 class StreamReader : public Reader, public Channel {
 public:
+    /**/
     StreamReader(int fd, StreamReader &destination);
     ~StreamReader();
     bool isAlive() const { return fd>=0; }
