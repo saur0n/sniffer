@@ -17,7 +17,15 @@ all: $(OUTPUT)
 clean:
 	rm -f $(OUTPUT)
 
+package: sniffer.tar.xz
+
+sniffer.tar.xz: sniffer.tar
+	xz sniffer.tar
+
+sniffer.tar: Makefile README.md $(HEADERS) $(SOURCES)
+	tar -cvf $@ $+
+
 $(OUTPUT): $(SOURCES) $(HEADERS)
 	$(CC) -o $(OUTPUT) $(CFLAGS) $(LIBRARIES) $(SOURCES)
 
-.PHONY: all clean
+.PHONY: all clean package
