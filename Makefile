@@ -6,8 +6,8 @@
 ################################################################################
 
 CC=g++
-CFLAGS=-Os -Wall -std=gnu++11 -g
-LIBRARIES=-lstdc++ -lpthread -lm -lz
+CFLAGS=-Os -Wall -std=gnu++11 -g -pthread
+LIBRARIES=-lstdc++ -lm -lz
 SOURCES=*.cpp core/*.cpp plugins/*.cpp
 HEADERS=*.hpp core/*.hpp
 OUTPUT=sniffer
@@ -26,6 +26,6 @@ sniffer.tar: Makefile README.md $(HEADERS) $(SOURCES)
 	tar -cvf $@ $+
 
 $(OUTPUT): $(SOURCES) $(HEADERS)
-	$(CC) -o $(OUTPUT) $(CFLAGS) $(LIBRARIES) $(SOURCES)
+	$(CC) -o $(OUTPUT) $(CFLAGS) $(SOURCES) $(LIBRARIES)
 
 .PHONY: all clean package
