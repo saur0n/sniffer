@@ -45,7 +45,7 @@ void StreamReader::read(void * destination, size_t length) {
     while (isAlive()&&(buffer.size()<length))
         cv.wait(lock);
     if (buffer.size()<length)
-        throw true;
+        throw End();
     memcpy(destination, buffer.data(), length);
     buffer.erase(0, length);
 }

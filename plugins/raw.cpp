@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Plugin for arbitrary binary protocol
  *  
- *  © 2017—2018, Sauron
+ *  © 2017—2020, Sauron
  ******************************************************************************/
 
 #include <cstdio>
@@ -41,7 +41,7 @@ string RawSniffer::dump(bool incoming, Reader &input) {
             buffer.push_back(byte);
             lastWriter=incoming?LW_INCOMING:LW_OUTGOING;
         }
-        catch (bool) {
+        catch (Reader::End) {
             if (buffer.empty())
                 throw;
             else

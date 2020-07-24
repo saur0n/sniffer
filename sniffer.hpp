@@ -41,6 +41,8 @@ class Interrupt {};
 /** Abstract data source **/
 class Reader {
 public:
+    /** End of stream was reached **/
+    class End {};
     /** Read specified number of bytes to buffer **/
     virtual void read(void * buffer, size_t length)=0;
     /** Read primitive value **/

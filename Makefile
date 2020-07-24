@@ -8,8 +8,8 @@
 CC=g++
 CFLAGS=-Os -Wall -std=gnu++11 -g -pthread
 LIBRARIES=-lstdc++ -lm -lz
-SOURCES=*.cpp core/*.cpp plugins/*.cpp
-HEADERS=*.hpp core/*.hpp
+SOURCES=*.cpp core/*.cpp plugins/*.cpp utils/*.cpp
+HEADERS=*.hpp core/*.hpp utils/*.hpp
 OUTPUT=sniffer
 
 all: $(OUTPUT)

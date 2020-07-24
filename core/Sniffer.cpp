@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2019, Sauron
+ *  © 2013—2020, Sauron
  ******************************************************************************/
 
 #include <arpa/inet.h>
@@ -154,7 +154,7 @@ void readFully(int stream, void * _buffer, size_t length) {
     while (length>0) {
         ssize_t retval=posix::read(stream, buffer, length);
         if (retval==0)
-            throw true;
+            throw Reader::End();
         length-=retval;
         buffer+=retval;
     }
@@ -421,14 +421,14 @@ void Connection::_threadFunc(Sniffer &sniffer, bool incoming) {
     try {
         threadFunc(sniffer.getStream(), incoming);
     }
-    catch (bool) {
+    catch (Reader::End) {
         error() << "disconnected from " << (incoming?"server":"client") << endl;
     }
     catch (const Error &e) {
         error() << e << endl;
     }
     catch (...) {
-        error() << "unknown exception caught" << endl;
+        error() << "unknown exception was thrown by the plugin" << endl;
     }
 }
 
