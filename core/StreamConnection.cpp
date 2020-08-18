@@ -40,14 +40,22 @@ void StreamReader::notify() {
     cv.notify_all();
 }
 
-void StreamReader::read(void * destination, size_t length) {
+size_t StreamReader::read(void * destination, size_t length) {
     std::unique_lock<std::mutex> lock(mutex);
-    while (isAlive()&&(buffer.size()<length))
+    if (buffer.length()<length)
         cv.wait(lock);
-    if (buffer.size()<length)
-        throw End();
-    memcpy(destination, buffer.data(), length);
-    buffer.erase(0, length);
+    if (!isAlive())
+        return 0;
+    if (buffer.length()<=length) {
+        memcpy(destination, buffer.data(), buffer.length());
+        buffer.clear();
+        return buffer.length();
+    }
+    else {
+        memcpy(destination, buffer.data(), length);
+        buffer.erase(0, length);
+        return length;
+    }
 }
 
 /******************************************************************************/

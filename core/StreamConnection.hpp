@@ -15,7 +15,7 @@ public:
 private:
     StreamReader(const StreamReader &)=delete;
     StreamReader &operator =(const StreamReader &)=delete;
-    void read(void * destination, size_t length);
+    size_t read(void * destination, size_t length);
     
     int fd;
     StreamReader &destination;

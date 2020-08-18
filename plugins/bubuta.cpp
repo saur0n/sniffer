@@ -81,7 +81,7 @@ public:
     BubutaReader(Reader &reader, const vector<uint8_t> &key) :
         reader(reader), key(key), shift(0) {}
     /** Read arbitrary number of bytes **/
-    void read(void * buffer, size_t length);
+    size_t read(void * buffer, size_t length);
     
 private:
     Reader &reader;
@@ -89,13 +89,14 @@ private:
     size_t shift;
 };
 
-void BubutaReader::read(void * buffer, size_t length) {
-    reader.read(buffer, length);
+size_t BubutaReader::read(void * buffer, size_t length) {
+    size_t result=reader.read(buffer, length);
     if (!key.empty()) {
         uint8_t * plaintext=static_cast<uint8_t *>(buffer);
-        for (size_t i=0; i<length; i++, shift++)
+        for (size_t i=0; i<result; i++, shift++)
             plaintext[i]^=key[shift%key.size()];
     }
+    return result;
 }
 
 class BubutaSniffer : public Protocol {
@@ -134,7 +135,7 @@ string BubutaSniffer::dump(bool incoming, Reader &rawInput) {
             output << ", flags=" << std::hex << int(flags) << std::dec;
         
         vector<uint8_t> payload(length-4);
-        input.read(&payload[0], payload.size());
+        input.readFully(&payload[0], payload.size());
         
         output << "]--\n";
         try {

@@ -6,7 +6,7 @@
 ################################################################################
 
 CC=g++
-CFLAGS=-Os -Wall -std=gnu++11 -g -pthread
+CFLAGS=-Os -Wall -std=gnu++11 -pthread
 LIBRARIES=-lstdc++ -lm -lz
 SOURCES=*.cpp core/*.cpp plugins/*.cpp utils/*.cpp
 HEADERS=*.hpp core/*.hpp utils/*.hpp

@@ -43,13 +43,26 @@ class Reader {
 public:
     /** End of stream was reached **/
     class End {};
-    /** Read specified number of bytes to buffer **/
-    virtual void read(void * buffer, size_t length)=0;
+    /** Read up to specified number of bytes to buffer **/
+    virtual size_t read(void * buffer, size_t length)=0;
+    /** Read exact number of bytes from the stream **/
+    void readFully(void * buffer, size_t length) {
+        uint8_t * byteBuffer=reinterpret_cast<uint8_t *>(buffer);
+        while (length) {
+            size_t nRead=read(byteBuffer, length);
+            if (nRead>0) {
+                length-=nRead;
+                byteBuffer+=nRead;
+            }
+            else
+                throw End();
+        }
+    }
     /** Read primitive value **/
     template <typename T>
     explicit operator T() {
         T result;
-        read(&result, sizeof(result));
+        readFully(&result, sizeof(result));
         return result;
     }
 };

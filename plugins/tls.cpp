@@ -46,7 +46,7 @@ public:
         uint8_t major=uint8_t(input), minor=uint8_t(input);
         uint16_t length=__builtin_bswap16(uint16_t(input));
         vector<uint8_t> data(length);
-        input.read(data.data(), length);
+        input.readFully(data.data(), length);
         
         std::ostringstream os;
         const char * recordType=getTLSRecordType(type);
