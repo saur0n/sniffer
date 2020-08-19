@@ -41,21 +41,28 @@ void StreamReader::notify() {
 }
 
 size_t StreamReader::read(void * destination, size_t length) {
-    std::unique_lock<std::mutex> lock(mutex);
-    if (buffer.length()<length)
-        cv.wait(lock);
-    if (!isAlive())
-        return 0;
-    if (buffer.length()<=length) {
-        memcpy(destination, buffer.data(), buffer.length());
-        buffer.clear();
-        return buffer.length();
+    size_t result=0;
+    if (length>0) {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (buffer.length()<length) {
+            do {
+                cv.wait(lock);
+            } while (isAlive()&&(buffer.length()==0));
+        }
+        if (isAlive()) {
+            if (buffer.length()<=length) {
+                memcpy(destination, buffer.data(), buffer.length());
+                result=buffer.length();
+                buffer.clear();
+            }
+            else {
+                memcpy(destination, buffer.data(), length);
+                buffer.erase(0, length);
+                result=length;
+            }
+        }
     }
-    else {
-        memcpy(destination, buffer.data(), length);
-        buffer.erase(0, length);
-        return length;
-    }
+    return result;
 }
 
 /******************************************************************************/

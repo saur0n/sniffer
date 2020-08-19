@@ -53,7 +53,7 @@ public:
     bool isAtEnd() const { return atEnd; }
 
 protected:
-    std::vector<uint8_t> getRest(size_t maxLength);
+    size_t getRest(void * buffer, size_t maxLength);
     
 private:
     InflateReader(const InflateReader &other)=delete;
