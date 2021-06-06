@@ -1,3 +1,10 @@
+/*******************************************************************************
+ *  Advanced network sniffer
+ *  Sniffer for stream-based connection (SOCK_STREAM)
+ *  
+ *  © 2013—2021, Sauron
+ ******************************************************************************/
+
 #ifndef __CORE_STREAMCONNECTION_HPP
 #define __CORE_STREAMCONNECTION_HPP
 

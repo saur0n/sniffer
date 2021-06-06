@@ -2,7 +2,7 @@
  *  Advanced network sniffer
  *  Main module
  *  
- *  © 2013—2020, Sauron
+ *  © 2013—2021, Sauron
  ******************************************************************************/
 
 #include <arpa/inet.h>
@@ -436,30 +436,6 @@ std::mutex Connection::logMutex;
 
 /******************************************************************************/
 
-int StreamConnection::initialize(HostAddress remote) {
-    // Get server network address
-    char service[16];
-    sprintf(service, "%d", remote.second);
-    struct addrinfo hints, * ai;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family=AF_INET; /* IPv4 only */
-    hints.ai_socktype=SOCK_STREAM; /* TCP */
-    int ret=getaddrinfo(remote.first.c_str(), service, &hints, &ai);
-    if (ret!=0)
-        throw Error("connecting", EHOSTUNREACH);
-    
-    // Connect to server
-    error() << "connecting to " << remote.first << ':' << remote.second << "…" << endl;
-    int result=socket(AF_INET, SOCK_STREAM, 0);
-    if (result<0)
-        Error::raise("creating socket");
-    if (connect(result, ai->ai_addr, ai->ai_addrlen)<0)
-        Error::raise("connecting to host");
-    freeaddrinfo(ai);
-    
-    return result;
-}
-
 int StreamConnection::acceptSocksConnection(int client) {
     uint8_t version=readByte(client);
     if (version==4) {
@@ -567,11 +543,6 @@ int StreamConnection::acceptSocksConnection(int client) {
         error() << "SOCKSv" << (int)version << " is not supported" << endl;
         throw Error("SOCKS version mismatch", EPROTO);
     }
-}
-
-void StreamConnection::threadFunc(ostream &log, bool incoming) {
-    while (true)
-        dump(log, incoming, incoming?server:client);
 }
 
 /******************************************************************************/
