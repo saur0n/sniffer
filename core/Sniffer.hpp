@@ -73,14 +73,14 @@ public:
     bool isAlive();
     /** Returns server-to-client handler **/
     virtual Channel &getChannel(bool incoming)=0;
+    /** Output beginning of message to cerr and return it **/
+    std::ostream &error() const;
     
 protected:
     /** Dump next packet **/
     void dump(std::ostream &log, bool incoming, Reader &reader);
     /** Start incoming and outgoing threads **/
     void start(Sniffer &sniffer);
-    /** Output beginning of message to cerr and return it **/
-    std::ostream &error() const;
     /** This function should be overridden by subclasses **/
     virtual void threadFunc(std::ostream &log, bool incoming)=0;
     

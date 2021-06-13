@@ -9,6 +9,7 @@
 #define __SNIFFER_HPP
 
 #include <map>
+#include <ostream>
 #include <string>
 #include <utility>
 
@@ -34,6 +35,9 @@ private:
     const char * stage;
     int error;
 };
+
+/** Print error message to stream **/
+std::ostream &operator <<(std::ostream &stream, const Error &error);
 
 /** A system call was interrupted **/
 class Interrupt {};

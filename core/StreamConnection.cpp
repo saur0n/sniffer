@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include "StreamConnection.hpp"
 
+using std::cerr;
 using std::endl;
 using std::ostream;
 
@@ -28,25 +29,28 @@ namespace posix {
 StreamReader::StreamReader(int fd, StreamReader &destination) : fd(fd), destination(destination) {}
 
 StreamReader::~StreamReader() {
-    close(fd);
-    fd=-1;
+    close();
     cv.notify_all();
 }
 
 void StreamReader::notify() {
     if (isAlive()) {
-        char tempBuffer[BUFFER_SIZE];
-        auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
-        if (retval>0) {
-            {
-                std::unique_lock<std::mutex> lock(mutex);
-                buffer.append(tempBuffer, retval);
+        try {
+            char tempBuffer[BUFFER_SIZE];
+            auto retval=posix::read(fd, tempBuffer, sizeof(tempBuffer));
+            if (retval>0) {
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    buffer.append(tempBuffer, retval);
+                }
+                posix::write(destination.getDescriptor(), tempBuffer, retval);
             }
-            posix::write(destination.getDescriptor(), tempBuffer, retval);
+            else
+                close();
         }
-        else {
-            close(fd);
-            fd=-1;
+        catch (const Error &error) {
+            cerr << "error: " << error << endl;
+            close();
         }
     }
     cv.notify_all();
@@ -75,6 +79,14 @@ size_t StreamReader::read(void * destination, size_t length) {
         }
     }
     return result;
+}
+
+void StreamReader::close() {
+    if (fd>=0) {
+        ::close(fd);
+        fd=-1;
+        destination.close();
+    }
 }
 
 /******************************************************************************/

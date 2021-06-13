@@ -23,6 +23,7 @@ private:
     StreamReader(const StreamReader &)=delete;
     StreamReader &operator =(const StreamReader &)=delete;
     size_t read(void * destination, size_t length);
+    void close();
     
     int fd;
     StreamReader &destination;

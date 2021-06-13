@@ -119,30 +119,33 @@ int bindTo(uint16_t port, int family=AF_INET, bool reuseAddress=true) {
 /** Dump byte array to text stream **/
 ostream &operator <<(ostream &stream, const vector<uint8_t> &data) {
     //stream << "DUMP (len=" << data.size() << ")\n";
-    char buffer[4];
-    size_t length=data.size();
-    string hex, ascii;
-    for (size_t i=0; i<=length; i++) {
-        if (i<length) {
-            uint8_t b=data[i];
-            sprintf(buffer, "%02x ", b);
-            hex+=buffer;
-            if (i%8==7)
-                hex+=' ';
-            ascii+=((b>=32&&b<127)?(char)b:'.');
-        }
-        if ((i%16==15)||(i==length)) {
-            for (unsigned i=hex.length(); i<50; i++)
-                hex+=' ';
-            stream << hex << ascii << endl;
-            hex=string();
-            ascii=string();
+    if (data.empty())
+        stream << "EMPTY\n";
+    else {
+        char buffer[4];
+        size_t length=data.size();
+        string hex, ascii;
+        for (size_t i=0; i<=length; i++) {
+            if (i<length) {
+                uint8_t b=data[i];
+                sprintf(buffer, "%02x ", b);
+                hex+=buffer;
+                if (i%8==7)
+                    hex+=' ';
+                ascii+=((b>=32&&b<127)?(char)b:'.');
+            }
+            if ((i%16==15)||(i==length)) {
+                for (unsigned i=hex.length(); i<50; i++)
+                    hex+=' ';
+                stream << hex << ascii << endl;
+                hex=string();
+                ascii=string();
+            }
         }
     }
     return stream;
 }
 
-/** Print error message to stream **/
 ostream &operator <<(ostream &stream, const Error &error) {
     stream << error.getStage() << ": " << error.getError();
     return stream;
@@ -392,7 +395,14 @@ bool Connection::isAlive() {
 }
 
 void Connection::dump(ostream &log, bool incoming, Reader &reader) {
-    string dumpText=protocol->dump(incoming, reader);
+    string dumpText;
+    try {
+        dumpText=protocol->dump(incoming, reader);
+    }
+    catch (...) {
+        dumpText="UNHANDLED EXCEPTION";
+    }
+    
     std::lock_guard<std::mutex> logLock(logMutex);
     ostringstream header;
     time_t now=time(0);
