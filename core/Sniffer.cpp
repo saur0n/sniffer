@@ -399,6 +399,9 @@ void Connection::dump(ostream &log, bool incoming, Reader &reader) {
     try {
         dumpText=protocol->dump(incoming, reader);
     }
+    catch (Reader::End) {
+        throw;
+    }
     catch (...) {
         dumpText="UNHANDLED EXCEPTION";
     }
